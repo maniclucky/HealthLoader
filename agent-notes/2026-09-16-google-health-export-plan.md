@@ -91,7 +91,7 @@ FitThing/
 ### Phase 1: Scaffolding
 - Create the layout above, `pyproject.toml` (src layout, `[project.scripts] fitthing = "fitthing.cli:main"`), and a venv at `.venv/`.
 - Add `secrets/`, `data/`, and `config.toml` to `.gitignore`.
-- `config.example.toml` keys: `client_secret_path`, `token_path`, `output_dir`, `start_date` (default: 1 year ago), `data_types` (list, or `"all"`), `window_days = 14`.
+- `config.example.toml` keys: `client_secret_path`, `token_path`, `output_dir`, `start_date` (optional; unset = today − 365 days), `data_types` (list, or `"all"`), `window_days = 14`.
 - **Accept when:** `pip install -e .[dev]` works, `fitthing --help` prints the subcommands, and `pytest` runs (0 tests is fine).
 
 ### Phase 2: Google Cloud setup [USER] + auth
@@ -131,7 +131,7 @@ FitThing/
   - A 403 on a type logs the error and moves to the next type. Other errors stop the run with exit code 1. State is saved up to the last good window.
   - Log progress to stderr: `steps 2026-01-01→2026-01-15: 1344 points`.
 - `fitthing types` lists the registry with ✔/✘ for granted scopes.
-- **Accept when:** a mocked end-to-end test writes the expected files and state, and a second run starts from the overlap. **[USER]** runs a live export for 30 days and checks that the files look right.
+- **Accept when:** a mocked end-to-end test writes the expected files and state. A second run starts from the overlap. A third identical run produces the same file set with no duplicates. A run interrupted mid-type resumes from the last completed window. **[USER]** runs a live export for 30 days and checks that the files look right.
 
 ### Phase 5: Docs & wrap-up
 - README: prerequisites, the Cloud setup steps (from Phase 2), install, `auth`, `export`, the 7-day re-auth note, and the output format.
@@ -145,7 +145,7 @@ Flattened CSV/Parquet exports per type, `dailyRollUp` summaries, `pairedDevices`
 ## 4. Decisions needed from the user before execution
 
 1. ✅ **Data categories: ALL** (decided 2026-09-16). Request all six read scopes: `activity_and_fitness`, `health_metrics_and_measurements`, `sleep`, `nutrition`, `ecg`, `irn` (each `.readonly`). `config.example.toml` default is `data_types = "all"`.
-2. **How far back?** Default: 1 year. Full history just takes longer; the windows make it safe either way.
+2. ✅ **History: 1 full year, rerunnable to stay current** (decided 2026-09-16). The first `fitthing export` backfills `today − 365 days` through today for every type. Each later run with no arguments continues from `state.json` (with the 3-day overlap) through today, so running it again at any time brings the data up to date. Reruns must be idempotent: same windows overwrite the same files, and nothing is duplicated. If a type has no state yet (for example, a newly granted scope), it gets the full 1-year backfill. Keep `start_date` in config as an optional override. When it's unset, compute `today − 365 days` at run time.
 3. **Output format:** raw JSON only (default), or add flattened CSV per type now?
 4. **Re-auth every 7 days** (Testing mode) is acceptable for personal use? The alternative is Google's restricted-scope verification, which isn't practical for a personal script.
 
