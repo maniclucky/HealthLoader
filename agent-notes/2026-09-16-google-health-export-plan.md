@@ -1,7 +1,7 @@
 # Plan: Google Health API → local export script
 
 **Summary:** Build a Python CLI (`fitthing`) that authenticates with Google OAuth, downloads the user's logged health data from the Google Health API v4, and saves it on disk as raw JSON with incremental re-sync.
-**Date:** 2026-09-16 · **Author:** Claude (Opus 5), planning · **Status:** APPROVED, ready to execute (all decisions in §4 resolved)
+**Date:** 2026-09-16 · **Author:** Claude (Opus 5), planning · **Status:** BUILT — all 5 phases complete and tested (see [2026-09-16-phase-5-handoff.md](2026-09-16-phase-5-handoff.md)). Remaining: user's real first `fitthing export` backfill.
 **Executor:** a follow-up agent. Do the phases in order. Do not skip acceptance checks.
 
 ---
