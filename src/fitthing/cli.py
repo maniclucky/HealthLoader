@@ -1,15 +1,19 @@
-"""Command-line entry point for fitthing.
+"""Command-line entry point for fitthing."""
 
-Subcommands (auth, whoami, types, export) are wired up in later phases.
-This scaffolding stage only needs `--help` and an empty subcommand set
-to work so that Phase 1's acceptance check passes.
-"""
+from __future__ import annotations
 
-import argparse
+import json
 import sys
 
+import requests
 
-def build_parser() -> argparse.ArgumentParser:
+from fitthing.auth import ALL_SCOPES, IDENTITY_URL, ensure_signed_in, run_browser_flow
+from fitthing.config import Config, load_config
+
+
+def build_parser():
+    import argparse
+
     parser = argparse.ArgumentParser(
         prog="fitthing",
         description="Download your logged health data from the Google Health API.",
@@ -36,6 +40,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _interactive(args) -> bool:
+    return sys.stdin.isatty() and not args.no_prompt
+
+
+def cmd_auth(args, config: Config) -> int:
+    run_browser_flow(config, ALL_SCOPES)
+    return 0
+
+
+def cmd_whoami(args, config: Config) -> int:
+    creds = ensure_signed_in(config, ALL_SCOPES, interactive=_interactive(args))
+    resp = requests.get(
+        IDENTITY_URL,
+        headers={"Authorization": f"Bearer {creds.token}"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    print(json.dumps(resp.json(), indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -43,6 +68,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+
+    config = load_config()
+
+    if args.command == "auth":
+        return cmd_auth(args, config)
+    if args.command == "whoami":
+        return cmd_whoami(args, config)
 
     print(f"'{args.command}' is not implemented yet.", file=sys.stderr)
     return 1
