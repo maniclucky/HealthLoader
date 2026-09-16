@@ -56,7 +56,10 @@ def cmd_whoami(args, config: Config) -> int:
         headers={"Authorization": f"Bearer {creds.token}"},
         timeout=30,
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        print(f"Google Health API error {resp.status_code}:", file=sys.stderr)
+        print(resp.text, file=sys.stderr)
+        return 1
     print(json.dumps(resp.json(), indent=2))
     return 0
 

@@ -92,16 +92,19 @@ def _save_token(token_path: Path, creds: Credentials) -> None:
 
 
 def _check_identity(creds: Credentials) -> bool:
-    """Cheap live check. Returns False on 401 (sign-in no longer valid)."""
+    """Cheap live check. Returns False only on 401 (sign-in no longer valid).
+
+    Any other status — including a real API error such as the account not
+    being linked to Google Health — says nothing about whether the token
+    itself is still good, so it's left for the caller's own request to
+    surface. Re-authorizing would not fix a non-auth error anyway.
+    """
     resp = requests.get(
         IDENTITY_URL,
         headers={"Authorization": f"Bearer {creds.token}"},
         timeout=30,
     )
-    if resp.status_code == 401:
-        return False
-    resp.raise_for_status()
-    return True
+    return resp.status_code != 401
 
 
 def run_browser_flow(config: Config, scopes: list[str]) -> Credentials:
