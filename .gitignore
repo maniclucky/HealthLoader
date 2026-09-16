@@ -23,3 +23,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+*.egg-info/
+.pytest_cache/
+
+# fitthing: personal config, credentials, and downloaded health data
+config.toml
+secrets/
+data/

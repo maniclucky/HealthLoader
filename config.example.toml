@@ -1,0 +1,23 @@
+# Copy this file to config.toml (gitignored) and adjust as needed.
+# config.toml is loaded by every fitthing command.
+
+# Path to the OAuth client credentials downloaded from Google Cloud Console
+# (Credentials -> OAuth client -> Desktop app -> Download JSON).
+client_secret_path = "secrets/client_secret.json"
+
+# Where the saved sign-in (refresh token) is stored after `fitthing auth`.
+token_path = "secrets/token.json"
+
+# Where exported data and sync state are written.
+output_dir = "data"
+
+# Optional. First export backfills from this date (YYYY-MM-DD) through today.
+# Leave unset to default to "today minus 365 days" at run time.
+# start_date = "2025-09-16"
+
+# Which data types to export: "all", or a list like ["steps", "weight", "sleep"].
+# See `fitthing types` for the full list and which scopes you've granted.
+data_types = "all"
+
+# Size, in days, of each query window sent to the API.
+window_days = 14
