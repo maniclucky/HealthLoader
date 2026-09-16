@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date
 
 import requests
 
 from fitthing.auth import ALL_SCOPES, IDENTITY_URL, ensure_signed_in, run_browser_flow
+from fitthing.client import ApiError, HealthClient
 from fitthing.config import Config, load_config
+from fitthing.datatypes import REGISTRY, resolve
+from fitthing.export import run_export
 
 
 def build_parser():
@@ -64,6 +68,47 @@ def cmd_whoami(args, config: Config) -> int:
     return 0
 
 
+def cmd_types(args, config: Config) -> int:
+    creds = ensure_signed_in(config, ALL_SCOPES, interactive=_interactive(args))
+    granted_scopes = set(creds.scopes or [])
+    for data_type in REGISTRY.values():
+        mark = "✔" if data_type.scope in granted_scopes else "✘"
+        print(f"{mark} {data_type.id}")
+    return 0
+
+
+def cmd_export(args, config: Config) -> int:
+    creds = ensure_signed_in(config, ALL_SCOPES, interactive=_interactive(args))
+    granted_scopes = set(creds.scopes or [])
+
+    try:
+        requested = args.types.split(",") if args.types else config.data_types
+        data_types = resolve(requested)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    since = date.fromisoformat(args.since) if args.since else None
+    until = date.fromisoformat(args.until) if args.until else None
+
+    client = HealthClient(creds)
+    try:
+        result = run_export(
+            client, config, data_types, granted_scopes, since=since, until=until, full=args.full
+        )
+    except ApiError as exc:
+        print(f"Export stopped: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Exported {len(result.exported)} type(s); "
+        f"{len(result.skipped_ungranted)} skipped (scope not granted); "
+        f"{len(result.failed)} failed.",
+        file=sys.stderr,
+    )
+    return 1 if result.failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -78,6 +123,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_auth(args, config)
     if args.command == "whoami":
         return cmd_whoami(args, config)
+    if args.command == "types":
+        return cmd_types(args, config)
+    if args.command == "export":
+        return cmd_export(args, config)
 
     print(f"'{args.command}' is not implemented yet.", file=sys.stderr)
     return 1
