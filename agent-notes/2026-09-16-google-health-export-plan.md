@@ -1,7 +1,7 @@
 # Plan: Google Health API → local export script
 
 **Summary:** Build a Python CLI (`fitthing`) that authenticates with Google OAuth, downloads the user's logged health data from the Google Health API v4, and saves it on disk as raw JSON with incremental re-sync.
-**Date:** 2026-09-16 · **Author:** Claude (Opus 5), planning · **Status:** DRAFT, waiting for user review
+**Date:** 2026-09-16 · **Author:** Claude (Opus 5), planning · **Status:** APPROVED, ready to execute (all decisions in §4 resolved)
 **Executor:** a follow-up agent. Do the phases in order. Do not skip acceptance checks.
 
 ---
@@ -99,14 +99,25 @@ FitThing/
    1. Create or select a Google Cloud project.
    2. Enable **Google Health API** (`health.googleapis.com`).
    3. Set up the OAuth consent screen: External, Testing. Add their own Google account under **Audience → Test users**.
-   4. Under **Data Access**, add the read-only scopes they chose (see §4).
+   4. Under **Data Access**, add all six `googlehealth.*.readonly` scopes listed in §1.
    5. Under **Credentials**, create an OAuth client of type **Desktop app**. Download the JSON to `secrets/client_secret.json`.
 2. `auth.py`:
    - Use `google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(...).run_local_server(port=0, access_type="offline", prompt="consent")`. This is a loopback redirect, and PKCE is handled by the library.
    - Save the credentials with `creds.to_json()` to `token_path`, file mode `0600`.
-   - `get_credentials()`: load the token. If expired, refresh it. On `google.auth.exceptions.RefreshError`, **or** if the stored scopes don't cover the configured ones, print "Re-authorization required (Testing-mode tokens expire every 7 days). Run: fitthing auth" and exit with code 2. Don't open a browser on its own during `export`.
-3. CLI `fitthing auth` runs the flow. `fitthing whoami` calls `GET /users/me/identity` and prints the result.
-4. **Accept when [USER]:** `fitthing auth` opens a browser, consent works, and `fitthing whoami` prints an identity.
+   - Also write `secrets/token_meta.json` with `{"authorized_at": <UTC ISO>, "scopes": [...]}`. Update it only after a full browser sign-in, not after a normal token refresh.
+   - **`ensure_signed_in(scopes, interactive: bool) -> Credentials`** is the single entry point every API-using command calls first. Order:
+     1. **No token file, stored scopes don't cover the required ones, or `client_secret.json` is missing** → sign-in required. If `client_secret.json` is missing, print where to put it (see step 1 above) and exit with code 2. Don't prompt.
+     2. **Token exists** → refresh it right away: `creds.refresh(Request())`. On `RefreshError` (expired or revoked, which is normal every 7 days in Testing mode) → sign-in required.
+     3. **Refresh works** → do a cheap live check with `GET /users/me/identity`. On 401 → sign-in required. Otherwise return `creds`.
+     4. **Sign-in required:**
+        - If `interactive` (default: `sys.stdin.isatty()` and no `--no-prompt`), print why ("Your Google sign-in has expired. Testing-mode sign-ins last 7 days.") and ask **`Sign in now? A browser window will open. [Y/n]: `**. On an empty answer or `y`, run the browser flow, save the token, and return the new credentials. On `n`, exit with code 2.
+        - Pass `open_browser=True` to `run_local_server`. It also prints the sign-in URL, so the user can copy it if no browser opens. Tell the user that.
+        - If not interactive (cron, piped input): print "Sign-in required. Run: fitthing auth" to stderr and exit with code 2. **Never block waiting for input with no TTY.**
+     5. **Early warning:** if `authorized_at` is ≥ 6 days old and the token still works, print a one-line notice: "Google sign-in expires in about 1 day. Run `fitthing auth` to renew." Continue the run.
+3. CLI: `fitthing auth` always runs the browser flow (use it to renew on purpose). `fitthing whoami` calls `ensure_signed_in` and then prints the identity. `export` and `types` also call `ensure_signed_in` before doing anything else. Add a global `--no-prompt` flag.
+4. **Accept when:**
+   - **[USER]:** `fitthing auth` opens a browser, consent works, and `fitthing whoami` prints an identity.
+   - **Unit tests with mocks:** a missing token with a TTY prompts, and `Y` runs the flow. A `RefreshError` with a TTY prompts. A `RefreshError` without a TTY exits with code 2 and never prompts. `n` exits with code 2. The warning appears at 6 days. Mock `input` and `isatty`.
 5. **Verify live and record findings:** for one type of each kind (steps, weight, daily-resting-heart-rate, exercise, sleep, food), do a 14-day `list`. Confirm that the filter fields in §1 work. Find the working filter for `food`, or confirm it has none. Write the results to `agent-notes/` and fix the registry if anything differs.
 
 ### Phase 3: API client
@@ -138,7 +149,7 @@ FitThing/
 - Add a handoff note in `agent-notes/` (what was verified live, known gaps). Update `INDEX.md`. Commit.
 
 ### Deferred (not in this plan unless the user asks)
-Flattened CSV/Parquet exports per type, `dailyRollUp` summaries, `pairedDevices` metadata, scheduled runs (cron/systemd timer), a SQLite store.
+Flattened CSV/Parquet exports (user chose JSON only), `dailyRollUp` summaries, `pairedDevices` metadata, scheduled runs (cron/systemd timer), a SQLite store.
 
 ---
 
@@ -146,8 +157,10 @@ Flattened CSV/Parquet exports per type, `dailyRollUp` summaries, `pairedDevices`
 
 1. ✅ **Data categories: ALL** (decided 2026-09-16). Request all six read scopes: `activity_and_fitness`, `health_metrics_and_measurements`, `sleep`, `nutrition`, `ecg`, `irn` (each `.readonly`). `config.example.toml` default is `data_types = "all"`.
 2. ✅ **History: 1 full year, rerunnable to stay current** (decided 2026-09-16). The first `fitthing export` backfills `today − 365 days` through today for every type. Each later run with no arguments continues from `state.json` (with the 3-day overlap) through today, so running it again at any time brings the data up to date. Reruns must be idempotent: same windows overwrite the same files, and nothing is duplicated. If a type has no state yet (for example, a newly granted scope), it gets the full 1-year backfill. Keep `start_date` in config as an optional override. When it's unset, compute `today − 365 days` at run time.
-3. **Output format:** raw JSON only (default), or add flattened CSV per type now?
-4. **Re-auth every 7 days** (Testing mode) is acceptable for personal use? The alternative is Google's restricted-scope verification, which isn't practical for a personal script.
+3. ✅ **Output: raw JSON only** (decided 2026-09-16). Use the per-window file format from Phase 4, pretty-printed (`indent=2`, `ensure_ascii=False`, UTF-8). No CSV or other formats.
+4. ✅ **Re-auth every 7 days is acceptable** (decided 2026-09-16). The app stays in Testing mode. The user wants the main run to handle this automatically: every command checks the sign-in first and interactively offers to sign in again when needed. See `ensure_signed_in` in Phase 2.
+
+All decisions are resolved. The plan is ready to execute.
 
 ## 5. Risks
 
