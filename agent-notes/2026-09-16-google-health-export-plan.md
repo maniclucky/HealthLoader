@@ -144,7 +144,7 @@ Flattened CSV/Parquet exports per type, `dailyRollUp` summaries, `pairedDevices`
 
 ## 4. Decisions needed from the user before execution
 
-1. **Which data categories?** Default: all six read scopes (activity, health metrics, sleep, nutrition, ECG, IRN). Fewer scopes means a smaller consent screen.
+1. ✅ **Data categories: ALL** (decided 2026-09-16). Request all six read scopes: `activity_and_fitness`, `health_metrics_and_measurements`, `sleep`, `nutrition`, `ecg`, `irn` (each `.readonly`). `config.example.toml` default is `data_types = "all"`.
 2. **How far back?** Default: 1 year. Full history just takes longer; the windows make it safe either way.
 3. **Output format:** raw JSON only (default), or add flattened CSV per type now?
 4. **Re-auth every 7 days** (Testing mode) is acceptable for personal use? The alternative is Google's restricted-scope verification, which isn't practical for a personal script.
