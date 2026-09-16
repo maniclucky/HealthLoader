@@ -34,3 +34,13 @@ Visit `https://fitbit.google.com/auth/signup` while signed into the same Google 
 ## Open question for Phase 2 step 5 (live filter verification)
 
 Blocked until the account is linked — can't do live `dataPoints.list` calls against an account with no data. Resume that verification once `whoami` succeeds.
+
+## Update: scope clarification (2026-09-16, same day)
+
+The user's data comes from the **Google Fit app** (aggregating several third-party apps), not a Fitbit device. This matters: the Google Health API's own docs only describe migrating *Fitbit Web API* apps — Google Fit is a separate legacy product with its own, unrelated sunset track. Research found:
+
+- Google's new consumer **Google Health app** (rollout began 2026-05-19) can connect to **Android Health Connect** — the on-device store most fitness apps, including current Google Fit, now write to. Linking that inside the Google Health app is the plausible way to satisfy `ACCOUNT_NOT_LINKED` with real data behind it.
+- A **bulk historical Google Fit → Google Health migration tool** was promised "later in 2026" but had not shipped as of last search. Older multi-year history may not be available even after linking; only what's flowed through Health Connect might show up at first.
+- The `fitbit.google.com/auth/signup` link from the API error reads as Fitbit-account creation and its relationship to Health Connect data is undocumented — did not test it blind to avoid creating a disconnected empty account.
+
+**Action taken:** user installed the Google Health app; it is now syncing with their existing (Health Connect-backed) data. Once sync finishes, retry `fitthing whoami`. If it still 400s with `ACCOUNT_NOT_LINKED`, or succeeds but `dataPoints.list` comes back empty for known-populated types, that confirms the historical-migration-tool gap above rather than a code bug — re-check Google's changelog for the migration tool before assuming something is broken.
