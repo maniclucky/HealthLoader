@@ -36,7 +36,7 @@
   | Session: exercise, hydration-log, nutrition-log, irregular-rhythm-notification | `{t}.interval.civil_start_time` | ISO-8601 civil, e.g. `"2026-01-01T00:00:00"` |
   | Session: `sleep` | `sleep.interval.end_time` | RFC-3339 UTC |
   | Session: `electrocardiogram` | `electrocardiogram.interval.start_time` | RFC-3339 UTC |
-  | Food (`food`, `food-measurement-unit`) | **unknown, verify in Phase 2** | — |
+  | Reference (`food`, `food-measurement-unit`) | **none — verified in Phase 2, excluded from export** | global catalogs, not per-user logs; see finding note |
 
 - **Query range:** the docs cap *rollups* at 90 days (14 days for `heart-rate`, `active-minutes`, `total-calories`, `calories-in-heart-rate-zone`). No limit is documented for `list`, but **use 14-day windows for every type anyway**. That's safe and keeps each response small.
 - **Rate limits:** not documented. Handle 429 and 5xx with backoff.
@@ -51,11 +51,11 @@ Scope prefix: `https://www.googleapis.com/auth/googlehealth.`
 | `activity_and_fitness.readonly` | steps, distance, altitude, active-energy-burned, active-minutes, active-zone-minutes, activity-level, sedentary-period, swim-lengths-data, time-in-heart-rate-zone (Interval); vo2-max, run-vo2-max (Sample); daily-vo2-max (Daily); exercise (Session) |
 | `health_metrics_and_measurements.readonly` | heart-rate, heart-rate-variability, weight, height, body-fat, blood-glucose, oxygen-saturation, core-body-temperature, respiratory-rate-sleep-summary (Sample); daily-heart-rate-variability, daily-heart-rate-zones, daily-oxygen-saturation, daily-respiratory-rate, daily-resting-heart-rate, daily-sleep-temperature-derivations (Daily) |
 | `sleep.readonly` | sleep (Session) |
-| `nutrition.readonly` | hydration-log, nutrition-log (Session); food, food-measurement-unit (Food) |
+| `nutrition.readonly` | hydration-log, nutrition-log (Session); ~~food, food-measurement-unit~~ (Reference — verified as global catalogs, excluded from export) |
 | `ecg.readonly` | electrocardiogram (Session) |
 | `irn.readonly` | irregular-rhythm-notification (Session) |
 
-Leave these out: `floors`, `total-calories`, `calories-in-heart-rate-zone` (the docs say `list` isn't supported), and every write-only type (menstrual-period, ovulation-test, moods, symptoms).
+Leave these out: `floors`, `total-calories`, `calories-in-heart-rate-zone` (the docs say `list` isn't supported), every write-only type (menstrual-period, ovulation-test, moods, symptoms), and `food`/`food-measurement-unit` (verified in Phase 2 to be global reference catalogs, not per-user logs — see `agent-notes/2026-09-16-account-not-linked-finding.md`).
 
 ---
 
