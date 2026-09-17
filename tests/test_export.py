@@ -18,6 +18,7 @@ def make_config(tmp_path: Path, window_days: int = 5, start_date: str | None = "
         start_date=start_date,
         data_types="all",
         window_days=window_days,
+        request_delay_seconds=0.0,
     )
 
 
@@ -205,6 +206,47 @@ def test_run_export_splits_by_granted_scope(tmp_path):
     assert result.exported == ["steps"]
     assert result.skipped_ungranted == ["electrocardiogram"]
     assert result.failed == []
+
+
+class TypeAwareFakeClient:
+    """Fails for one specific data type id; succeeds normally for the rest.
+
+    Models the real failure this was written to fix: `sleep` ran out of
+    retries under sustained rate limiting, and everything after it in the
+    registry (hydration-log, nutrition-log, electrocardiogram,
+    irregular-rhythm-notification) never even started.
+    """
+
+    def __init__(self, fail_type_id, fail_status=500):
+        self.calls = []
+        self._fail_type_id = fail_type_id
+        self._fail_status = fail_status
+
+    def list_data_points(self, data_type_id, filter_str, page_size):
+        self.calls.append(data_type_id)
+        if data_type_id == self._fail_type_id:
+            raise ApiError(self._fail_status, "simulated sustained rate limiting")
+        return [{"n": len(self.calls)}]
+
+
+def test_run_export_isolates_a_failing_type_and_continues(tmp_path):
+    config = make_config(tmp_path)
+    data_types = [REGISTRY["steps"], REGISTRY["sleep"], REGISTRY["weight"]]
+    granted_scopes = {dt.scope for dt in data_types}
+    client = TypeAwareFakeClient(fail_type_id="sleep")
+
+    result = run_export(
+        client, config, data_types, granted_scopes,
+        since=date(2026, 1, 1), until=date(2026, 1, 2), full=False,
+    )
+
+    # steps comes before sleep and weight comes after it in the list passed
+    # in; both must still run despite sleep failing in between.
+    assert result.exported == ["steps", "weight"]
+    assert result.failed == ["sleep"]
+    assert raw_files(config, "steps") != []
+    assert raw_files(config, "weight") != []
+    assert raw_files(config, "sleep") == []
 
 
 def test_state_round_trips(tmp_path):

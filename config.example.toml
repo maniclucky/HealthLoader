@@ -21,3 +21,10 @@ data_types = "all"
 
 # Size, in days, of each query window sent to the API.
 window_days = 14
+
+# Pause this many seconds before every API request. A full 1-year backfill
+# across all data types makes hundreds of requests; with no pacing at all,
+# a real run hit Google's (undocumented) rate limit partway through. Raise
+# this if you still see repeated rate-limit errors; lower it once you're
+# only doing small incremental syncs and want them to finish faster.
+request_delay_seconds = 0.5

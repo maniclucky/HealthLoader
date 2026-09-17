@@ -126,9 +126,12 @@ def export_data_type(
     """Export one data type's windows, saving state after each window.
 
     Returns True on success, False if this type was skipped due to a 403
-    (scope revoked/not actually granted). Any other ApiError propagates,
-    intentionally stopping the whole run — state up to the last completed
-    window has already been saved by then.
+    (scope revoked/not actually granted). Any other ApiError (e.g. retries
+    exhausted under sustained rate limiting) propagates to the caller —
+    run_export() catches it there and isolates the failure to this one
+    type instead of aborting the whole run. Either way, state up to the
+    last completed window has already been saved by the time an error
+    surfaces.
     """
     start, end = range_for(data_type, config, state, since, until, full)
 
@@ -184,7 +187,17 @@ def run_export(
 
     result = ExportResult(skipped_ungranted=[dt.id for dt in ungranted])
     for dt in granted:
-        ok = export_data_type(client, config, dt, state, since, until, full)
+        try:
+            ok = export_data_type(client, config, dt, state, since, until, full)
+        except ApiError as exc:
+            # A real full backfill showed this matters: one type running out
+            # of retries (e.g. under sustained rate limiting) used to abort
+            # the whole run, so every type after it in the list never even
+            # started. Isolate the failure to this type instead — state is
+            # already saved up to its last completed window, so a rerun
+            # resumes it correctly — and keep going with the rest.
+            print(f"{dt.id}: stopped after repeated errors, skipping. {exc}", file=sys.stderr)
+            ok = False
         (result.exported if ok else result.failed).append(dt.id)
 
     return result

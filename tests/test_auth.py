@@ -19,6 +19,7 @@ def make_config(tmp_path: Path, client_secret_exists: bool = True) -> Config:
         start_date=None,
         data_types="all",
         window_days=14,
+        request_delay_seconds=0.0,
     )
 
 

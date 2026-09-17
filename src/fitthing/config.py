@@ -16,6 +16,7 @@ DEFAULTS = {
     "start_date": None,
     "data_types": "all",
     "window_days": 14,
+    "request_delay_seconds": 0.5,
 }
 
 
@@ -27,6 +28,7 @@ class Config:
     start_date: str | None
     data_types: str | list[str]
     window_days: int
+    request_delay_seconds: float
 
     @property
     def token_meta_path(self) -> Path:
@@ -68,4 +70,5 @@ def load_config(path: Path | None = None) -> Config:
         start_date=values["start_date"],
         data_types=values["data_types"],
         window_days=int(values["window_days"]),
+        request_delay_seconds=float(values["request_delay_seconds"]),
     )

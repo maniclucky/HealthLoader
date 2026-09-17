@@ -38,12 +38,21 @@ class HealthClient:
     429/5xx retry policy from the plan.
     """
 
-    def __init__(self, credentials, session=None, sleep=time.sleep):
+    def __init__(self, credentials, session=None, sleep=time.sleep, request_delay_seconds: float = 0.0):
         self._session = session or AuthorizedSession(credentials)
         self._sleep = sleep
+        # A fixed pacing delay before every attempt (not just retries).
+        # Added after a real full-backfill run fired ~800 requests in ~2
+        # minutes with zero pacing and got rate-limited partway through
+        # (see agent-notes/2026-09-16-rate-limit-finding.md). 0 preserves
+        # the original unpaced behavior for tests and anyone who doesn't
+        # need it.
+        self._request_delay_seconds = request_delay_seconds
 
     def _request(self, method: str, url: str, **kwargs):
         for attempt in range(MAX_RETRIES + 1):
+            if self._request_delay_seconds:
+                self._sleep(self._request_delay_seconds)
             resp = self._session.request(method, url, timeout=REQUEST_TIMEOUT_SECONDS, **kwargs)
             if resp.status_code not in RETRY_STATUSES:
                 if resp.status_code >= 400:

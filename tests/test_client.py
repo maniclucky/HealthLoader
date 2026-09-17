@@ -114,6 +114,33 @@ def test_no_retry_on_400():
     assert len(session.calls) == 1
 
 
+def test_request_delay_seconds_paces_every_attempt():
+    sleeps = []
+    responses = [FakeResponse(200, {"dataPoints": []})]
+    session = FakeSession(responses)
+    client = HealthClient(
+        credentials=None,
+        session=session,
+        sleep=lambda s: sleeps.append(s),
+        request_delay_seconds=0.5,
+    )
+
+    list(client.list_data_points("steps", "f", page_size=10))
+
+    assert sleeps == [0.5]
+
+
+def test_no_pacing_delay_by_default():
+    sleeps = []
+    responses = [FakeResponse(200, {"dataPoints": []})]
+    client, session = make_client(responses, sleeps)  # request_delay_seconds defaults to 0.0
+
+    list(client.list_data_points("steps", "f", page_size=10))
+
+    assert session.calls
+    assert sleeps == []
+
+
 def test_exhausts_retries_and_raises():
     sleeps = []
     # 6 total attempts allowed (5 retries); all fail.

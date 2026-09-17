@@ -13,6 +13,7 @@ def test_load_config_defaults_when_missing(tmp_path, capsys):
     assert config.start_date is None
     assert config.data_types == "all"
     assert config.window_days == 14
+    assert config.request_delay_seconds == 0.5
 
     err = capsys.readouterr().err
     assert "config.example.toml" in err
@@ -24,6 +25,7 @@ def test_load_config_reads_overrides(tmp_path):
         'client_secret_path = "secrets/other.json"\n'
         'data_types = ["steps", "weight"]\n'
         "window_days = 7\n"
+        "request_delay_seconds = 1.5\n"
     )
 
     config = load_config(config_path)
@@ -31,6 +33,7 @@ def test_load_config_reads_overrides(tmp_path):
     assert config.client_secret_path == Path("secrets/other.json")
     assert config.data_types == ["steps", "weight"]
     assert config.window_days == 7
+    assert config.request_delay_seconds == 1.5
     # untouched keys keep their defaults
     assert config.token_path == Path("secrets/token.json")
 

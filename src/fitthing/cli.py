@@ -91,7 +91,7 @@ def cmd_export(args, config: Config) -> int:
     since = date.fromisoformat(args.since) if args.since else None
     until = date.fromisoformat(args.until) if args.until else None
 
-    client = HealthClient(creds)
+    client = HealthClient(creds, request_delay_seconds=config.request_delay_seconds)
     try:
         result = run_export(
             client, config, data_types, granted_scopes, since=since, until=until, full=args.full
