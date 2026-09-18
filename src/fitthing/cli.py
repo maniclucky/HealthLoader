@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import date
+from pathlib import Path
 
 import requests
 
@@ -12,6 +13,8 @@ from fitthing.auth import ALL_SCOPES, IDENTITY_URL, ensure_signed_in, run_browse
 from fitthing.client import ApiError, HealthClient
 from fitthing.config import Config, load_config
 from fitthing.cronometer.auth import CronometerAuthError, resolve_credentials, sign_in
+from fitthing.cronometer.client import CronometerClient, CronometerClientError, ExportCapReached
+from fitthing.cronometer.export import run_cronometer_export, run_cronometer_import
 from fitthing.datatypes import REGISTRY, resolve
 from fitthing.export import run_export
 
@@ -42,6 +45,21 @@ def build_parser():
     export_parser.add_argument(
         "--full", action="store_true", help="Ignore saved state and re-backfill from scratch."
     )
+
+    cronometer_export_parser = subparsers.add_parser(
+        "cronometer-export", help="Download Cronometer daily calories/macros to disk."
+    )
+    cronometer_export_parser.add_argument("--since", help="Start date (YYYY-MM-DD), overrides state.")
+    cronometer_export_parser.add_argument("--until", help="End date (YYYY-MM-DD), default: today.")
+    cronometer_export_parser.add_argument(
+        "--full", action="store_true", help="Ignore saved state and re-backfill from scratch."
+    )
+
+    cronometer_import_parser = subparsers.add_parser(
+        "cronometer-import",
+        help="Merge a Cronometer Daily Summary CSV you exported by hand.",
+    )
+    cronometer_import_parser.add_argument("file", help="Path to the exported CSV.")
 
     return parser
 
@@ -78,6 +96,43 @@ def cmd_cronometer_auth(args, config: Config) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     print(f"Signed in to Cronometer as {creds.username}.")
+    return 0
+
+
+def cmd_cronometer_export(args, config: Config) -> int:
+    creds = resolve_credentials(config.cronometer, interactive=_interactive(args))
+    client = CronometerClient(config.cronometer, creds)
+
+    since = date.fromisoformat(args.since) if args.since else None
+    until = date.fromisoformat(args.until) if args.until else None
+
+    try:
+        result = run_cronometer_export(client, config, since=since, until=until, full=args.full)
+    except ExportCapReached as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except CronometerAuthError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except CronometerClientError as exc:
+        print(f"Cronometer export stopped: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Cronometer: {result.days_updated} day(s) updated, range "
+        f"{result.range_start.isoformat()}→{result.range_end.isoformat()}.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def cmd_cronometer_import(args, config: Config) -> int:
+    try:
+        days_imported = run_cronometer_import(config, Path(args.file))
+    except (ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"Cronometer: {days_imported} day(s) imported from {args.file}.", file=sys.stderr)
     return 0
 
 
@@ -142,6 +197,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_types(args, config)
     if args.command == "export":
         return cmd_export(args, config)
+    if args.command == "cronometer-export":
+        return cmd_cronometer_export(args, config)
+    if args.command == "cronometer-import":
+        return cmd_cronometer_import(args, config)
 
     print(f"'{args.command}' is not implemented yet.", file=sys.stderr)
     return 1
