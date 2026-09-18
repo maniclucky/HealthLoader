@@ -86,8 +86,13 @@ def range_for(
     full year's backfill is one request, not ~26. `until` defaults to the
     *local* calendar day — Cronometer's own days are local, not UTC (see
     agent-notes/2026-09-17-cronometer-nutrition-plan.md §1.3).
+
+    Today (local) is always excluded, even if explicitly requested via
+    --until: a day still in progress is inherently an incomplete data set,
+    not a real reading.
     """
     until_date = until if until is not None else date.today()
+    until_date = min(until_date, date.today() - timedelta(days=1))
 
     if since is not None:
         return since, until_date

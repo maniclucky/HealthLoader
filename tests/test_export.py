@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -7,7 +7,11 @@ import pytest
 from fitthing.client import ApiError
 from fitthing.config import Config
 from fitthing.datatypes import REGISTRY
-from fitthing.export import export_data_type, load_state, run_export, save_state
+from fitthing.export import export_data_type, load_state, range_for, run_export, save_state
+
+
+def _today_utc() -> date:
+    return datetime.now(timezone.utc).date()
 
 
 def make_config(tmp_path: Path, window_days: int = 5, start_date: str | None = "2026-01-01") -> Config:
@@ -20,6 +24,36 @@ def make_config(tmp_path: Path, window_days: int = 5, start_date: str | None = "
         window_days=window_days,
         request_delay_seconds=0.0,
     )
+
+
+def test_until_defaults_to_yesterday_utc_not_today(tmp_path):
+    config = make_config(tmp_path, start_date=None)
+    steps = REGISTRY["steps"]
+
+    start, end = range_for(steps, config, state={}, since=None, until=None, full=True)
+
+    assert end == _today_utc()  # end is exclusive, so this covers through yesterday
+
+
+def test_explicit_until_today_is_clamped_to_yesterday(tmp_path):
+    config = make_config(tmp_path, start_date=None)
+    steps = REGISTRY["steps"]
+    today = _today_utc()
+
+    start, end = range_for(steps, config, state={}, since=None, until=today, full=True)
+
+    assert end == today  # exclusive end == today means the last included day is yesterday
+
+
+def test_explicit_until_in_the_past_is_unaffected(tmp_path):
+    config = make_config(tmp_path, start_date=None)
+    steps = REGISTRY["steps"]
+
+    start, end = range_for(
+        steps, config, state={}, since=None, until=date(2020, 1, 1), full=True
+    )
+
+    assert end == date(2020, 1, 2)
 
 
 class FakeClient:

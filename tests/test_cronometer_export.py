@@ -64,7 +64,7 @@ def test_first_run_backfills_default_365_days():
         gwt_permutation="p",
         request_delay_seconds=0.0,
     )
-    until = date(2026, 9, 18)
+    until = date(2020, 9, 18)
 
     start, end = range_for(config, state={}, since=None, until=until, full=False)
 
@@ -83,7 +83,7 @@ def test_first_run_uses_configured_start_date():
         request_delay_seconds=0.0,
     )
 
-    start, end = range_for(config, state={}, since=None, until=date(2026, 9, 18), full=False)
+    start, end = range_for(config, state={}, since=None, until=date(2020, 9, 18), full=False)
 
     assert start == date(2025, 1, 1)
 
@@ -98,12 +98,12 @@ def test_incremental_run_overlaps_3_days():
         gwt_permutation="p",
         request_delay_seconds=0.0,
     )
-    state = {STATE_KEY: {"synced_through": "2026-09-10"}}
+    state = {STATE_KEY: {"synced_through": "2020-09-10"}}
 
-    start, end = range_for(config, state, since=None, until=date(2026, 9, 18), full=False)
+    start, end = range_for(config, state, since=None, until=date(2020, 9, 18), full=False)
 
-    assert start == date(2026, 9, 7)
-    assert end == date(2026, 9, 18)
+    assert start == date(2020, 9, 7)
+    assert end == date(2020, 9, 18)
 
 
 def test_full_flag_ignores_state():
@@ -116,11 +116,60 @@ def test_full_flag_ignores_state():
         gwt_permutation="p",
         request_delay_seconds=0.0,
     )
-    state = {STATE_KEY: {"synced_through": "2026-09-10"}}
+    state = {STATE_KEY: {"synced_through": "2020-09-10"}}
 
-    start, end = range_for(config, state, since=None, until=date(2026, 9, 18), full=True)
+    start, end = range_for(config, state, since=None, until=date(2020, 9, 18), full=True)
 
-    assert start == date(2026, 9, 18) - timedelta(days=365)
+    assert start == date(2020, 9, 18) - timedelta(days=365)
+
+
+def test_until_defaults_to_yesterday_local_not_today():
+    config = CronometerConfig(
+        enabled=True,
+        credentials_path=Path("x"),
+        session_path=Path("y"),
+        start_date=None,
+        gwt_module_base="b",
+        gwt_permutation="p",
+        request_delay_seconds=0.0,
+    )
+
+    start, end = range_for(config, state={}, since=None, until=None, full=True)
+
+    assert end == date.today() - timedelta(days=1)
+
+
+def test_explicit_until_today_is_clamped_to_yesterday():
+    config = CronometerConfig(
+        enabled=True,
+        credentials_path=Path("x"),
+        session_path=Path("y"),
+        start_date=None,
+        gwt_module_base="b",
+        gwt_permutation="p",
+        request_delay_seconds=0.0,
+    )
+    today = date.today()
+
+    start, end = range_for(config, state={}, since=None, until=today, full=True)
+
+    assert end == today - timedelta(days=1)
+
+
+def test_explicit_until_in_the_past_is_unaffected():
+    config = CronometerConfig(
+        enabled=True,
+        credentials_path=Path("x"),
+        session_path=Path("y"),
+        start_date=None,
+        gwt_module_base="b",
+        gwt_permutation="p",
+        request_delay_seconds=0.0,
+    )
+
+    start, end = range_for(config, state={}, since=None, until=date(2020, 1, 1), full=True)
+
+    assert end == date(2020, 1, 1)
 
 
 def test_since_overrides_state():
@@ -133,14 +182,14 @@ def test_since_overrides_state():
         gwt_permutation="p",
         request_delay_seconds=0.0,
     )
-    state = {STATE_KEY: {"synced_through": "2026-09-10"}}
+    state = {STATE_KEY: {"synced_through": "2020-09-10"}}
 
     start, end = range_for(
-        config, state, since=date(2026, 1, 1), until=date(2026, 9, 18), full=False
+        config, state, since=date(2020, 1, 1), until=date(2020, 9, 18), full=False
     )
 
-    assert start == date(2026, 1, 1)
-    assert end == date(2026, 9, 18)
+    assert start == date(2020, 1, 1)
+    assert end == date(2020, 9, 18)
 
 
 # --- merge_daily_nutrition ---

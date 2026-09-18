@@ -63,9 +63,12 @@ def range_for(
     """Compute the [start, end) window for one data type's export.
 
     `until` is inclusive (the last day to include), matching --until's CLI
-    meaning, so the actual exclusive end is `until + 1 day`.
+    meaning, so the actual exclusive end is `until + 1 day`. Today (UTC) is
+    always excluded, even if explicitly requested via --until: a day still
+    in progress is inherently an incomplete data set, not a real reading.
     """
     until_inclusive = until if until is not None else _today_utc()
+    until_inclusive = min(until_inclusive, _today_utc() - timedelta(days=1))
     end = until_inclusive + timedelta(days=1)
 
     if since is not None:
