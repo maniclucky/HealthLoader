@@ -28,3 +28,21 @@ window_days = 14
 # this if you still see repeated rate-limit errors; lower it once you're
 # only doing small incremental syncs and want them to finish faster.
 request_delay_seconds = 0.5
+
+[cronometer]
+# Automated download of daily calories/macros from cronometer.com. Unofficial
+# endpoints — see agent-notes/2026-09-17-cronometer-nutrition-plan.md and
+# agent-notes/2026-09-17-cronometer-endpoints.md. Defaults to disabled so
+# nothing changes unless you opt in.
+enabled = false
+credentials_path = "secrets/cronometer.json"
+session_path = "secrets/cronometer_session.json"
+# First run backfills from here (YYYY-MM-DD); unset = today minus 365 days.
+# start_date = "2025-09-17"
+# These two are copied out of a real browser session and change when
+# Cronometer redeploys their web app. If Cronometer export starts failing,
+# refresh them by redoing agent-notes/2026-09-17-cronometer-endpoints.md's
+# Phase 0 recon.
+gwt_module_base = "https://cronometer.com/cronometer/"
+gwt_permutation = ""   # filled in by Phase 0 recon; see agent-notes/2026-09-17-cronometer-endpoints.md
+request_delay_seconds = 1.0
