@@ -190,6 +190,42 @@ def test_cached_session_reused_without_a_second_login_post(tmp_path):
     assert token == "19317289bc1210cdf92d3e5312058ac5"
 
 
+@responses.activate
+def test_generate_token_survives_duplicate_sesnonce_cookies(tmp_path):
+    """Regression: live 2026-09-18 run hit CookieConflictError when Cronometer's
+    authenticate RPC re-set `sesnonce` under a different domain than the one
+    already in the jar, leaving two Cookie objects with the same name."""
+    from requests.cookies import create_cookie
+
+    config = make_cronometer_config(tmp_path)
+    session = __import__("requests").Session()
+    session.cookies.set_cookie(create_cookie(name="sesnonce", value="stale", domain="", expires=None))
+    session.cookies.set_cookie(
+        create_cookie(name="sesnonce", value="fresh", domain="cronometer.com", expires=9999999999)
+    )
+    responses.post(RPC_URL, body='//OK["19317289bc1210cdf92d3e5312058ac5"]')
+
+    token = cronometer_auth._generate_export_token(session, config, user_id=14913987)
+
+    assert token == "19317289bc1210cdf92d3e5312058ac5"
+    sent_body = responses.calls[0].request.body
+    assert "fresh" in sent_body and "stale" not in sent_body
+
+
+def test_resolve_duplicate_cookies_prefers_longest_lived():
+    from requests.cookies import create_cookie
+
+    session = __import__("requests").Session()
+    session.cookies.set_cookie(create_cookie(name="sesnonce", value="stale", domain="", expires=None))
+    session.cookies.set_cookie(
+        create_cookie(name="sesnonce", value="fresh", domain="cronometer.com", expires=9999999999)
+    )
+
+    resolved = cronometer_auth._resolve_duplicate_cookies(session.cookies)
+
+    assert resolved["sesnonce"] == "fresh"
+
+
 def test_load_cached_session_missing_file_returns_none(tmp_path):
     config = make_cronometer_config(tmp_path)
     assert cronometer_auth.load_cached_session(config.session_path) is None

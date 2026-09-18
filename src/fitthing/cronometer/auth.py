@@ -190,9 +190,29 @@ def _authenticate(session: requests.Session, config: CronometerConfig) -> int:
     return int(match.group(1))
 
 
+def _resolve_duplicate_cookies(jar) -> dict[str, str]:
+    """Collapse a cookiejar to one value per name.
+
+    Live behavior (found 2026-09-18): Cronometer's RPC responses can
+    (re)set `sesnonce` scoped to a different domain than the one already in
+    the jar, so the jar ends up with two Cookie objects named `sesnonce`.
+    `session.cookies.get("sesnonce")` requires domain-less lookups to be
+    unique and raises CookieConflictError in that case. Prefer the
+    longest-lived (highest `expires`) cookie per name — the real,
+    persistent session cookie has a 14-day Max-Age; a transient duplicate
+    is more likely session-scoped (no `expires`) or shorter-lived.
+    """
+    best: dict[str, tuple[float, str]] = {}
+    for cookie in jar:
+        expires = cookie.expires or 0
+        if cookie.name not in best or expires > best[cookie.name][0]:
+            best[cookie.name] = (expires, cookie.value)
+    return {name: value for name, (_, value) in best.items()}
+
+
 def _generate_export_token(session: requests.Session, config: CronometerConfig, user_id: int) -> str:
     """The generateAuthorizationToken GWT-RPC call. Returns the export nonce."""
-    sesnonce = session.cookies.get("sesnonce")
+    sesnonce = _resolve_duplicate_cookies(session.cookies).get("sesnonce")
     body = _GENERATE_TOKEN_BODY.format(
         module_base=config.gwt_module_base,
         sesnonce=sesnonce,
@@ -224,7 +244,7 @@ def get_export_token(session: requests.Session, config: CronometerConfig) -> str
 def save_session(path: Path, session: requests.Session) -> None:
     """Persist session cookies to `path` as JSON, chmod 0600."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(session.cookies.get_dict()))
+    path.write_text(json.dumps(_resolve_duplicate_cookies(session.cookies)))
     os.chmod(path, 0o600)
 
 
