@@ -94,7 +94,69 @@ Useful flags:
 Rerun `fitthing export` any time — it's safe and idempotent. It re-checks
 the last 3 days of any previous run (devices sometimes sync late) and picks
 up new data since, without re-downloading or duplicating anything already
-on disk.
+on disk. Today's date is always excluded — a day still in progress isn't a
+complete reading — and gets picked up automatically on a later run once
+it's actually over.
+
+## 5. Cronometer: daily calories & macros (optional)
+
+A second, independent data source: daily total calories/protein/carbs/fat
+from [cronometer.com](https://cronometer.com), if you log food there. This
+rides Cronometer's own web app endpoints (there's no public API for
+personal accounts), automated with your normal cronometer.com username and
+password — no separate app registration, unlike the Google setup above.
+
+```bash
+fitthing cronometer-auth      # prompts for your Cronometer username/password
+fitthing cronometer-export    # first run: backfills 1 year; every rerun: catches up
+```
+
+`cronometer-auth` signs in once and saves both the session
+(`secrets/cronometer_session.json`) and, so you're not asked again, your
+credentials (`secrets/cronometer.json`, `chmod 600`) — unless you set
+`CRONOMETER_USERNAME`/`CRONOMETER_PASSWORD` environment variables instead,
+which is the no-storage-on-disk option. `cronometer-export` reuses the
+cached session and only re-authenticates if it's expired.
+
+Same `--since`, `--until`, and `--full` flags as `export` above, and the
+same "today is always excluded" rule.
+
+**Cronometer's export is capped at ~10/day, personal use only.** Unlike the
+Google path, this is never windowed — one request covers the whole
+backfill range or the whole incremental catch-up, so a normal day costs 1
+of the 10.
+
+**If you have 2FA enabled on Cronometer, automated sign-in won't work.**
+Export the Daily Summary CSV yourself from Cronometer's web UI (Account
+Data → Export) and run:
+
+```bash
+fitthing cronometer-import path/to/exported.csv
+```
+
+This is the same parser and merge logic `cronometer-export` uses, so the
+result is identical either way. It's also the break-glass path if
+Cronometer redeploys their frontend and automated sign-in starts failing
+outright (see below).
+
+**What's stored:** `data/nutrition/daily.json`, one entry per date —
+`calories_kcal`, `protein_g`, `carbs_g`, `fat_g` — plus the untouched raw
+CSV at `data/raw/cronometer-daily-summary/{start}_{end}.csv`. This is
+deliberately daily totals only: no per-food detail, no micronutrients, no
+Cronometer biometrics/exercise (weight and activity already come from
+Google Health above). Cronometer's days are your local calendar days,
+already summed by Cronometer — not the UTC windows Google's `nutrition-log`
+uses, so the two aren't merged or reconciled; if you log in both places,
+treat this file as the more accurate one for "what did I eat."
+
+**If Cronometer redeploys their web app, automated sign-in/export can start
+failing** — this integration rides undocumented endpoints, not a stable
+API. The error message names the `gwt_permutation` value it was using and
+points here: `agent-notes/2026-09-17-cronometer-endpoints.md` documents how
+to re-capture the current values from your browser's DevTools and update
+`config.toml` (`gwt_permutation`) and `src/fitthing/cronometer/auth.py`
+(the request body templates). Until you do, `cronometer-import` still
+works from a manually exported CSV.
 
 ## Output format
 
@@ -132,7 +194,10 @@ normally.
 ## Repository layout
 
 - `agent-notes/` — shared reference space for AI agents (and humans). See `agent-notes/README.md`.
-- `src/fitthing/` — the `fitthing` package.
+- `src/fitthing/` — the `fitthing` package; the Google Health path (`client.py`, `datatypes.py`,
+  `windows.py`, `export.py`) and `src/fitthing/cronometer/` (`auth.py`, `client.py`, `parse.py`,
+  `export.py`) are independent data sources that don't share code, since they have almost nothing
+  in common beyond "download health data on a schedule."
 - `tests/` — pytest suite (no network calls).
 - `config.example.toml` — copy to `config.toml` (gitignored) and edit.
 - `secrets/`, `data/` — gitignored; created locally, never committed.
