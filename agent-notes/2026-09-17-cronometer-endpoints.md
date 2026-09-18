@@ -1,3 +1,9 @@
+**Phase 2 live-verified 2026-09-18:** `fitthing cronometer-auth` ran against the real site and
+succeeded end-to-end — login, `authenticate`, and `generateAuthorizationToken` all worked with
+the templates below exactly as captured, confirming the policy-hash inference (same hash for
+both RPC calls) was correct. `secrets/cronometer_session.json` was created with `sesnonce` plus
+`AWSALB`/`AWSALBCORS`/`JSESSIONID`.
+
 # Finding: Cronometer login flow — Phase 0 recon (COMPLETE)
 
 **Date:** 2026-09-17 → 2026-09-18 · **Author:** Claude (Sonnet 5), with the user driving Firefox
