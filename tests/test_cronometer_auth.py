@@ -209,6 +209,39 @@ def test_cli_cronometer_auth_prints_message_on_success(tmp_path, monkeypatch, ca
     assert "Signed in to Cronometer as me@example.com." in capsys.readouterr().out
 
 
+def test_cli_cronometer_auth_persists_credentials_to_secrets_file(tmp_path, monkeypatch):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="right")
+    monkeypatch.delenv("CRONOMETER_USERNAME", raising=False)
+    monkeypatch.delenv("CRONOMETER_PASSWORD", raising=False)
+    monkeypatch.setattr(cli, "resolve_credentials", lambda cfg, interactive: creds)
+    monkeypatch.setattr(cli, "sign_in", lambda cfg, creds: object())
+
+    class Args:
+        no_prompt = True
+
+    cli.cmd_cronometer_auth(Args(), _wrap(config))
+
+    saved = cronometer_auth._load_saved_credentials(config.credentials_path)
+    assert saved == creds
+
+
+def test_cli_cronometer_auth_does_not_persist_env_var_credentials(tmp_path, monkeypatch):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="right")
+    monkeypatch.setenv("CRONOMETER_USERNAME", "me@example.com")
+    monkeypatch.setenv("CRONOMETER_PASSWORD", "right")
+    monkeypatch.setattr(cli, "resolve_credentials", lambda cfg, interactive: creds)
+    monkeypatch.setattr(cli, "sign_in", lambda cfg, creds: object())
+
+    class Args:
+        no_prompt = True
+
+    cli.cmd_cronometer_auth(Args(), _wrap(config))
+
+    assert not config.credentials_path.exists()
+
+
 def test_cli_cronometer_auth_exits_2_on_auth_error(tmp_path, monkeypatch):
     config = make_cronometer_config(tmp_path)
     creds = CronometerCredentials(username="me@example.com", password="wrong")

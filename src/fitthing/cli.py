@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -12,7 +13,12 @@ import requests
 from fitthing.auth import ALL_SCOPES, IDENTITY_URL, ensure_signed_in, run_browser_flow
 from fitthing.client import ApiError, HealthClient
 from fitthing.config import Config, load_config
-from fitthing.cronometer.auth import CronometerAuthError, resolve_credentials, sign_in
+from fitthing.cronometer.auth import (
+    CronometerAuthError,
+    resolve_credentials,
+    save_credentials,
+    sign_in,
+)
 from fitthing.cronometer.client import CronometerClient, CronometerClientError, ExportCapReached
 from fitthing.cronometer.export import run_cronometer_export, run_cronometer_import
 from fitthing.datatypes import REGISTRY, resolve
@@ -95,6 +101,14 @@ def cmd_cronometer_auth(args, config: Config) -> int:
     except CronometerAuthError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+
+    # Per plan §3.2: env-var credentials are the "nothing stored on disk"
+    # option, so only persist when they came from the secrets file or a
+    # fresh prompt — re-saving file-sourced creds is a harmless no-op.
+    from_env = os.environ.get("CRONOMETER_USERNAME") and os.environ.get("CRONOMETER_PASSWORD")
+    if not from_env:
+        save_credentials(config.cronometer.credentials_path, creds.username, creds.password)
+
     print(f"Signed in to Cronometer as {creds.username}.")
     return 0
 
