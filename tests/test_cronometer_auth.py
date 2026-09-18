@@ -3,13 +3,21 @@ import stat
 from pathlib import Path
 
 import pytest
+import responses
 
+from fitthing import cli
 from fitthing.config import CronometerConfig
+from fitthing.cronometer import auth as cronometer_auth
 from fitthing.cronometer.auth import (
+    CronometerAuthError,
     CronometerCredentials,
+    RPC_URL,
     resolve_credentials,
     save_credentials,
+    sign_in,
 )
+
+LOGIN_PAGE_HTML = '<html><body><input type="hidden" value="tok-abc123" name="anticsrf"></body></html>'
 
 
 def make_cronometer_config(tmp_path: Path, credentials_path: Path | None = None) -> CronometerConfig:
@@ -77,3 +85,151 @@ def test_interactive_prompt_used_when_nothing_saved(tmp_path, monkeypatch):
     creds = resolve_credentials(config, interactive=True)
 
     assert creds == CronometerCredentials(username="typed@example.com", password="typed-password")
+
+
+# --- Phase 2: live login / authenticate / export-token flow ---
+
+
+def test_extract_anticsrf_from_html_snippet():
+    assert cronometer_auth._extract_anticsrf(LOGIN_PAGE_HTML) == "tok-abc123"
+
+
+def test_extract_anticsrf_missing_raises():
+    with pytest.raises(CronometerAuthError, match="anticsrf"):
+        cronometer_auth._extract_anticsrf("<html><body>no token here</body></html>")
+
+
+@responses.activate
+def test_login_failure_raises_clear_error(tmp_path):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="wrong")
+    responses.get(cronometer_auth.LOGIN_URL, body=LOGIN_PAGE_HTML)
+    # No Set-Cookie: sesnonce on the response -> login did not succeed.
+    responses.post(cronometer_auth.LOGIN_URL, body=LOGIN_PAGE_HTML)
+
+    with pytest.raises(CronometerAuthError, match="2FA"):
+        sign_in(config, creds)
+
+
+@responses.activate
+def test_unexpected_authenticate_response_names_permutation_and_note(tmp_path):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="right")
+    responses.get(cronometer_auth.LOGIN_URL, body=LOGIN_PAGE_HTML)
+    responses.post(
+        cronometer_auth.LOGIN_URL,
+        body=LOGIN_PAGE_HTML,
+        headers={"Set-Cookie": "sesnonce=abc123; Path=/"},
+    )
+    responses.post(RPC_URL, body="//EX[some unexpected error shape]")
+
+    with pytest.raises(CronometerAuthError) as exc_info:
+        sign_in(config, creds)
+
+    message = str(exc_info.value)
+    assert config.gwt_permutation in message
+    assert "2026-09-17-cronometer-endpoints.md" in message
+
+
+@responses.activate
+def test_unexpected_generate_token_response_names_permutation_and_note(tmp_path):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="right")
+    responses.get(cronometer_auth.LOGIN_URL, body=LOGIN_PAGE_HTML)
+    responses.post(
+        cronometer_auth.LOGIN_URL,
+        body=LOGIN_PAGE_HTML,
+        headers={"Set-Cookie": "sesnonce=abc123; Path=/"},
+    )
+    responses.post(RPC_URL, body="//OK[14913987,1]")
+    responses.post(RPC_URL, body="//EX[some unexpected error shape]")
+
+    with pytest.raises(CronometerAuthError) as exc_info:
+        sign_in(config, creds)
+
+    message = str(exc_info.value)
+    assert config.gwt_permutation in message
+    assert "2026-09-17-cronometer-endpoints.md" in message
+
+
+@responses.activate
+def test_successful_sign_in_saves_session(tmp_path):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="right")
+    responses.get(cronometer_auth.LOGIN_URL, body=LOGIN_PAGE_HTML)
+    responses.post(
+        cronometer_auth.LOGIN_URL,
+        body=LOGIN_PAGE_HTML,
+        headers={"Set-Cookie": "sesnonce=abc123; Path=/"},
+    )
+    responses.post(RPC_URL, body='//OK[14913987,1]')
+    responses.post(RPC_URL, body='//OK["19317289bc1210cdf92d3e5312058ac5"]')
+
+    session = sign_in(config, creds)
+
+    assert session.cookies.get("sesnonce") == "abc123"
+    assert config.session_path.exists()
+    mode = stat.S_IMODE(config.session_path.stat().st_mode)
+    assert mode == 0o600
+    assert json.loads(config.session_path.read_text()) == {"sesnonce": "abc123"}
+
+
+@responses.activate
+def test_cached_session_reused_without_a_second_login_post(tmp_path):
+    config = make_cronometer_config(tmp_path)
+    config.session_path.parent.mkdir(parents=True, exist_ok=True)
+    config.session_path.write_text(json.dumps({"sesnonce": "cached-nonce"}))
+    # Only the RPC endpoint is registered; a call to LOGIN_URL would raise
+    # ConnectionError from `responses`, proving no second login POST happens.
+    responses.post(RPC_URL, body='//OK[14913987,1]')
+    responses.post(RPC_URL, body='//OK["19317289bc1210cdf92d3e5312058ac5"]')
+
+    session = cronometer_auth.load_cached_session(config.session_path)
+    token = cronometer_auth.get_export_token(session, config)
+
+    assert token == "19317289bc1210cdf92d3e5312058ac5"
+
+
+def test_load_cached_session_missing_file_returns_none(tmp_path):
+    config = make_cronometer_config(tmp_path)
+    assert cronometer_auth.load_cached_session(config.session_path) is None
+
+
+def test_cli_cronometer_auth_prints_message_on_success(tmp_path, monkeypatch, capsys):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="right")
+    monkeypatch.setattr(cli, "resolve_credentials", lambda cfg, interactive: creds)
+    monkeypatch.setattr(cli, "sign_in", lambda cfg, creds: object())
+
+    class Args:
+        no_prompt = True
+
+    code = cli.cmd_cronometer_auth(Args(), _wrap(config))
+    assert code == 0
+    assert "Signed in to Cronometer as me@example.com." in capsys.readouterr().out
+
+
+def test_cli_cronometer_auth_exits_2_on_auth_error(tmp_path, monkeypatch):
+    config = make_cronometer_config(tmp_path)
+    creds = CronometerCredentials(username="me@example.com", password="wrong")
+    monkeypatch.setattr(cli, "resolve_credentials", lambda cfg, interactive: creds)
+
+    def raise_auth_error(cfg, creds):
+        raise CronometerAuthError("nope")
+
+    monkeypatch.setattr(cli, "sign_in", raise_auth_error)
+
+    class Args:
+        no_prompt = True
+
+    code = cli.cmd_cronometer_auth(Args(), _wrap(config))
+    assert code == 2
+
+
+def _wrap(cronometer_config: CronometerConfig):
+    """A minimal stand-in with just the `.cronometer` attribute cli.py reads."""
+
+    class _Config:
+        cronometer = cronometer_config
+
+    return _Config()

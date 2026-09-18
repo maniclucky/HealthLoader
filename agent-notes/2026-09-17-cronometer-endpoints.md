@@ -41,7 +41,14 @@ answer is simpler:
     2026-09-17 session mistook for the real session cookie. It's a stale pre-login anonymous-
     session cookie that login explicitly clears. **Ignore it — it is not the session token.**
 - **The post-login GWT-RPC call is named `authenticate`**, not something export-specific:
-  - Request body template: `7|0|5|https://cronometer.com/cronometer/|<32-char-policy-hash>|<43-char-service-interface-string>|authenticate|java.lang.Integer/3438268394|1|2|3|4|1|5|5|%TZ_OFFSET_MINUTES%|` — the only variable part is the trailing integer, the browser's local timezone offset in minutes (e.g. `-300` for EST). No sesnonce/userId placeholder needed — auth rides the `sesnonce` cookie automatically, set by the browser.
+  - Request body template: `7|0|5|https://cronometer.com/cronometer/|13F6CC6C06AE73A6E95DE9B0233AB365|com.cronometer.shared.rpc.CronometerService|authenticate|java.lang.Integer/3438268394|1|2|3|4|1|5|5|%TZ_OFFSET_MINUTES%|` — the only variable part is the trailing integer, the browser's local timezone offset in minutes (e.g. `-300` for EST). No sesnonce/userId placeholder needed — auth rides the `sesnonce` cookie automatically, set by the browser.
+    - The policy hash (`13F6CC6C06AE73A6E95DE9B0233AB365`) and service interface name are the
+      **same values** seen in `generateAuthorizationToken` below — not a coincidence: GWT's RPC
+      policy hash is per-{service, permutation}, not per-method, so every call to
+      `CronometerService` under permutation `1008F9FC280FA1C9D6FFD0C3960CC121` shares it. (First
+      captured this session; briefly mis-redacted as `<32/43-char>` placeholders in an earlier
+      pass of this note — they were never secrets, just non-obviously-safe-looking strings an
+      over-cautious redaction script caught by length.)
   - Headers: same as `generateAuthorizationToken` below — `X-GWT-Permutation:
     1008F9FC280FA1C9D6FFD0C3960CC121`, `X-GWT-Module-Base: https://cronometer.com/cronometer/`.
   - **Response starts `//OK[<userId>,...` with userId as the literal first bracketed integer** —
