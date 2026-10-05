@@ -141,7 +141,7 @@ def test_unexpected_generate_token_response_names_permutation_and_note(tmp_path)
         body=LOGIN_PAGE_HTML,
         headers={"Set-Cookie": "sesnonce=abc123; Path=/"},
     )
-    responses.post(RPC_URL, body="//OK[14913987,1]")
+    responses.post(RPC_URL, body="//OK[12345678,1]")
     responses.post(RPC_URL, body="//EX[some unexpected error shape]")
 
     with pytest.raises(CronometerAuthError) as exc_info:
@@ -162,8 +162,8 @@ def test_successful_sign_in_saves_session(tmp_path):
         body=LOGIN_PAGE_HTML,
         headers={"Set-Cookie": "sesnonce=abc123; Path=/"},
     )
-    responses.post(RPC_URL, body='//OK[14913987,1]')
-    responses.post(RPC_URL, body='//OK["19317289bc1210cdf92d3e5312058ac5"]')
+    responses.post(RPC_URL, body='//OK[12345678,1]')
+    responses.post(RPC_URL, body='//OK["0123456789abcdef0123456789abcdef"]')
 
     session = sign_in(config, creds)
 
@@ -181,13 +181,13 @@ def test_cached_session_reused_without_a_second_login_post(tmp_path):
     config.session_path.write_text(json.dumps({"sesnonce": "cached-nonce"}))
     # Only the RPC endpoint is registered; a call to LOGIN_URL would raise
     # ConnectionError from `responses`, proving no second login POST happens.
-    responses.post(RPC_URL, body='//OK[14913987,1]')
-    responses.post(RPC_URL, body='//OK["19317289bc1210cdf92d3e5312058ac5"]')
+    responses.post(RPC_URL, body='//OK[12345678,1]')
+    responses.post(RPC_URL, body='//OK["0123456789abcdef0123456789abcdef"]')
 
     session = cronometer_auth.load_cached_session(config.session_path)
     token = cronometer_auth.get_export_token(session, config)
 
-    assert token == "19317289bc1210cdf92d3e5312058ac5"
+    assert token == "0123456789abcdef0123456789abcdef"
 
 
 @responses.activate
@@ -203,11 +203,11 @@ def test_generate_token_survives_duplicate_sesnonce_cookies(tmp_path):
     session.cookies.set_cookie(
         create_cookie(name="sesnonce", value="fresh", domain="cronometer.com", expires=9999999999)
     )
-    responses.post(RPC_URL, body='//OK["19317289bc1210cdf92d3e5312058ac5"]')
+    responses.post(RPC_URL, body='//OK["0123456789abcdef0123456789abcdef"]')
 
-    token = cronometer_auth._generate_export_token(session, config, user_id=14913987)
+    token = cronometer_auth._generate_export_token(session, config, user_id=12345678)
 
-    assert token == "19317289bc1210cdf92d3e5312058ac5"
+    assert token == "0123456789abcdef0123456789abcdef"
     sent_body = responses.calls[0].request.body
     assert "fresh" in sent_body and "stale" not in sent_body
 

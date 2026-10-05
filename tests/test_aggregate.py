@@ -283,7 +283,7 @@ def test_nutrition_columns_come_from_daily_json(tmp_path):
 
 def test_target_settings_fill_missing_nutrition_days_only(tmp_path):
     config = make_config(
-        tmp_path, csv_days=2, target_settings={"calories": 2531, "protein": 177, "carbs": 305, "fat": 67}
+        tmp_path, csv_days=2, target_settings={"calories": 2200, "protein": 150, "carbs": 250, "fat": 70}
     )
     _write_daily_nutrition(
         config.output_dir,
@@ -294,10 +294,10 @@ def test_target_settings_fill_missing_nutrition_days_only(tmp_path):
 
     # 2026-01-09 has no logged nutrition at all: filled from targets.
     filled = rows[date(2026, 1, 9)]
-    assert filled["Energy (kcal)"] == 2531.0
-    assert filled["Protein (g)"] == 177.0
-    assert filled["Carbs (g)"] == 305.0
-    assert filled["Fat (g)"] == 67.0
+    assert filled["Energy (kcal)"] == 2200.0
+    assert filled["Protein (g)"] == 150.0
+    assert filled["Carbs (g)"] == 250.0
+    assert filled["Fat (g)"] == 70.0
     # 2026-01-10 was actually logged: targets must not override it.
     logged = rows[date(2026, 1, 10)]
     assert logged["Energy (kcal)"] == 1000.0

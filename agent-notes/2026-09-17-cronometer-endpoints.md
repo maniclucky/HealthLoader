@@ -93,7 +93,7 @@ Body template (verbatim structure, `%SESNONCE%`/`%USER_ID%` are the only substit
 - The `sesnonce` **cookie value** is passed again as an RPC parameter here — confirms `sesnonce`
   is both a cookie and something the client must read back out and resend, not purely
   cookie-jar-transparent.
-- `%USER_ID%` is a plain decimal number (e.g. `14913987`-shaped), sent as a literal integer in
+- `%USER_ID%` is a plain decimal number (e.g. `12345678`-shaped), sent as a literal integer in
   the payload, not a string-table entry. Not itself secret, but treat as user-specific — don't
   hardcode this specific value as a fixture.
 - Response body: **not yet captured redacted** — grab it next time (should carry the export

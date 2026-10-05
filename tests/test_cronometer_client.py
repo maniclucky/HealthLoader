@@ -30,7 +30,7 @@ CSV_BODY = "Date,Energy (kcal),Protein (g),Carbs (g),Fat (g)\n2025-01-01,2000,10
 LOGIN_PAGE_HTML = '<html><body><input value="tok-abc123" name="anticsrf"></body></html>'
 
 
-def _stub_get_export_token(monkeypatch, token="19317289bc1210cdf92d3e5312058ac5"):
+def _stub_get_export_token(monkeypatch, token="0123456789abcdef0123456789abcdef"):
     import fitthing.cronometer.client as client_module
 
     monkeypatch.setattr(client_module, "get_export_token", lambda session, config: token)

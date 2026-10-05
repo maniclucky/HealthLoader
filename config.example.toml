@@ -46,8 +46,8 @@ csv_days = 30
 
 # Path to a small JSON file of your daily targets, used to fill in any day
 # with no logged nutrition at all (a day you didn't log to Cronometer, or
-# haven't backfilled yet): {"calories": 2531, "protein": 177, "carbs": 305,
-# "fat": 67}. A day that *was* logged is never overridden, even partially.
+# haven't backfilled yet): {"calories": 2200, "protein": 150, "carbs": 250,
+# "fat": 70}. A day that *was* logged is never overridden, even partially.
 # Missing/unset keys, or a missing file, just leave that day's cell blank.
 # Weight and body fat aren't target-filled — gaps there are linearly
 # interpolated between the nearest known reading on each day, instead (a
