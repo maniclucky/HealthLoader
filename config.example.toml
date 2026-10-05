@@ -12,7 +12,8 @@ token_path = "secrets/token.json"
 output_dir = "data"
 
 # Optional. First export backfills from this date (YYYY-MM-DD) through today.
-# Leave unset to default to "today minus 365 days" at run time.
+# Leave unset to default to "today minus 30 days" at run time (override with
+# --days, up to 365, on a per-run basis).
 # start_date = "2025-09-16"
 
 # Which data types to export: "all", or a list like ["steps", "weight", "sleep"].
@@ -29,6 +30,31 @@ window_days = 14
 # only doing small incremental syncs and want them to finish faster.
 request_delay_seconds = 0.5
 
+# `fitthing export` also rebuilds a day-level CSV (data/health/daily.csv):
+# nutrition (calories/protein/carbs/fat) from Cronometer's daily.json plus
+# weight/body-fat/steps/active-energy-burned from whatever raw Google JSON
+# is on disk. Steps and active-energy-burned are summed per day only from
+# these source app package names (your wearable's Health Connect source) —
+# other apps that double-report the same activity are excluded. Leave the
+# list empty to sum across every source instead.
+csv_device_packages = ["com.gdjztech.ringconn"]
+
+# How many trailing days the CSV covers, ending yesterday. Every day in this
+# window gets a row even with no data at all, so gaps are visible for the
+# interpolation/target-filling below.
+csv_days = 30
+
+# Path to a small JSON file of your daily targets, used to fill in any day
+# with no logged nutrition at all (a day you didn't log to Cronometer, or
+# haven't backfilled yet): {"calories": 2531, "protein": 177, "carbs": 305,
+# "fat": 67}. A day that *was* logged is never overridden, even partially.
+# Missing/unset keys, or a missing file, just leave that day's cell blank.
+# Weight and body fat aren't target-filled — gaps there are linearly
+# interpolated between the nearest known reading on each day, instead (a
+# leading/trailing gap has no second reading to interpolate from, so it's
+# left blank). Steps and energy burned are never filled either way.
+target_settings_path = "targetSettings.json"
+
 [cronometer]
 # Automated download of daily calories/macros from cronometer.com. Unofficial
 # endpoints — see agent-notes/2026-09-17-cronometer-nutrition-plan.md and
@@ -37,7 +63,8 @@ request_delay_seconds = 0.5
 enabled = false
 credentials_path = "secrets/cronometer.json"
 session_path = "secrets/cronometer_session.json"
-# First run backfills from here (YYYY-MM-DD); unset = today minus 365 days.
+# First run backfills from here (YYYY-MM-DD); unset = today minus 30 days
+# (override with --days, up to 365, on a per-run basis).
 # start_date = "2025-09-17"
 # These two are copied out of a real browser session and change when
 # Cronometer redeploys their web app. If Cronometer export starts failing,

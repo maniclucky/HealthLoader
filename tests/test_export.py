@@ -23,6 +23,9 @@ def make_config(tmp_path: Path, window_days: int = 5, start_date: str | None = "
         data_types="all",
         window_days=window_days,
         request_delay_seconds=0.0,
+        csv_device_packages=[],
+        csv_days=30,
+        target_settings_path=tmp_path / "targetSettings.json",
     )
 
 
@@ -54,6 +57,39 @@ def test_explicit_until_in_the_past_is_unaffected(tmp_path):
     )
 
     assert end == date(2020, 1, 2)
+
+
+def test_first_run_backfills_default_30_days(tmp_path):
+    config = make_config(tmp_path, start_date=None)
+    steps = REGISTRY["steps"]
+    until = date(2020, 9, 18)
+
+    start, end = range_for(steps, config, state={}, since=None, until=until, full=True)
+
+    assert start == until - timedelta(days=30)
+
+
+def test_first_run_days_override_widens_backfill(tmp_path):
+    config = make_config(tmp_path, start_date=None)
+    steps = REGISTRY["steps"]
+    until = date(2020, 9, 18)
+
+    start, end = range_for(
+        steps, config, state={}, since=None, until=until, full=True, days=365
+    )
+
+    assert start == until - timedelta(days=365)
+
+
+def test_configured_start_date_wins_over_days_override(tmp_path):
+    config = make_config(tmp_path, start_date="2019-01-01")
+    steps = REGISTRY["steps"]
+
+    start, end = range_for(
+        steps, config, state={}, since=None, until=date(2020, 9, 18), full=True, days=365
+    )
+
+    assert start == date(2019, 1, 1)
 
 
 class FakeClient:

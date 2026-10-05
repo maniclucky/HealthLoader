@@ -23,7 +23,8 @@ from fitthing.cronometer.parse import DailyNutrition, parse_daily_summary
 # logged/edited a few days late, so every incremental run re-checks this
 # many days before where the last run left off.
 STATE_OVERLAP_DAYS = 3
-DEFAULT_BACKFILL_DAYS = 365
+DEFAULT_BACKFILL_DAYS = 30
+MAX_BACKFILL_DAYS = 365
 STATE_KEY = "cronometer-daily-summary"
 
 
@@ -78,6 +79,7 @@ def range_for(
     since: date | None,
     until: date | None,
     full: bool,
+    days: int | None = None,
 ) -> tuple[date, date]:
     """The inclusive [start, end] range for one export run — never windowed.
 
@@ -90,6 +92,10 @@ def range_for(
     Today (local) is always excluded, even if explicitly requested via
     --until: a day still in progress is inherently an incomplete data set,
     not a real reading.
+
+    `days` overrides DEFAULT_BACKFILL_DAYS for a fresh backfill (no prior
+    state, no --since); it's ignored once cronometer_config.start_date is
+    set, since that's a more specific override.
     """
     until_date = until if until is not None else date.today()
     until_date = min(until_date, date.today() - timedelta(days=1))
@@ -102,7 +108,8 @@ def range_for(
         if cronometer_config.start_date:
             start = date.fromisoformat(cronometer_config.start_date)
         else:
-            start = until_date - timedelta(days=DEFAULT_BACKFILL_DAYS)
+            backfill_days = days if days is not None else DEFAULT_BACKFILL_DAYS
+            start = until_date - timedelta(days=backfill_days)
         return start, until_date
 
     synced_through = date.fromisoformat(type_state["synced_through"])
@@ -123,6 +130,7 @@ def run_cronometer_export(
     since: date | None = None,
     until: date | None = None,
     full: bool = False,
+    days: int | None = None,
 ) -> CronometerExportResult:
     """Fetch, save the raw CSV, merge into daily.json, and advance state.
 
@@ -132,7 +140,7 @@ def run_cronometer_export(
     merge is idempotent, so that's safe.
     """
     state = load_state(config.state_path)
-    start, end = range_for(config.cronometer, state, since, until, full)
+    start, end = range_for(config.cronometer, state, since, until, full, days)
 
     csv_text = client.export_daily_summary(start, end)
 

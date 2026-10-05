@@ -17,6 +17,9 @@ DEFAULTS = {
     "data_types": "all",
     "window_days": 14,
     "request_delay_seconds": 0.5,
+    "csv_device_packages": ["com.gdjztech.ringconn"],
+    "csv_days": 30,
+    "target_settings_path": "targetSettings.json",
 }
 
 # Unofficial endpoints — see agent-notes/2026-09-17-cronometer-nutrition-plan.md and
@@ -66,6 +69,9 @@ class Config:
     data_types: str | list[str]
     window_days: int
     request_delay_seconds: float
+    csv_device_packages: list[str]
+    csv_days: int
+    target_settings_path: Path
     cronometer: CronometerConfig = field(default_factory=lambda: _load_cronometer_config({}))
 
     @property
@@ -109,5 +115,8 @@ def load_config(path: Path | None = None) -> Config:
         data_types=values["data_types"],
         window_days=int(values["window_days"]),
         request_delay_seconds=float(values["request_delay_seconds"]),
+        csv_device_packages=list(values["csv_device_packages"]),
+        csv_days=int(values["csv_days"]),
+        target_settings_path=Path(values["target_settings_path"]),
         cronometer=_load_cronometer_config(values.get("cronometer", {})),
     )

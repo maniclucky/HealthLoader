@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from fitthing.aggregate import write_daily_csv
 from fitthing.client import ApiError, HealthClient
 from fitthing.config import Config
 from fitthing.datatypes import DataType
@@ -20,7 +21,8 @@ from fitthing.windows import build_filter, iter_windows
 # Devices/apps can sync a few days late, so every incremental run re-checks
 # this many days before where the last run left off.
 STATE_OVERLAP_DAYS = 3
-DEFAULT_BACKFILL_DAYS = 365
+DEFAULT_BACKFILL_DAYS = 30
+MAX_BACKFILL_DAYS = 365
 
 
 def _today_utc() -> date:
@@ -59,6 +61,7 @@ def range_for(
     since: date | None,
     until: date | None,
     full: bool,
+    days: int | None = None,
 ) -> tuple[date, date]:
     """Compute the [start, end) window for one data type's export.
 
@@ -66,6 +69,10 @@ def range_for(
     meaning, so the actual exclusive end is `until + 1 day`. Today (UTC) is
     always excluded, even if explicitly requested via --until: a day still
     in progress is inherently an incomplete data set, not a real reading.
+
+    `days` overrides DEFAULT_BACKFILL_DAYS for a fresh backfill (no prior
+    state, no --since); it's ignored once config.start_date is set, since
+    that's a more specific override.
     """
     until_inclusive = until if until is not None else _today_utc()
     until_inclusive = min(until_inclusive, _today_utc() - timedelta(days=1))
@@ -77,11 +84,13 @@ def range_for(
     type_state = state.get(data_type.id)
     if full or not type_state or not type_state.get("synced_through"):
         # No prior state (or --full): backfill from config.start_date, or
-        # DEFAULT_BACKFILL_DAYS before the end of this run's range.
+        # `days` (default DEFAULT_BACKFILL_DAYS) before the end of this run's
+        # range.
         if config.start_date:
             start = date.fromisoformat(config.start_date)
         else:
-            start = until_inclusive - timedelta(days=DEFAULT_BACKFILL_DAYS)
+            backfill_days = days if days is not None else DEFAULT_BACKFILL_DAYS
+            start = until_inclusive - timedelta(days=backfill_days)
         return start, end
 
     synced_through = date.fromisoformat(type_state["synced_through"])
@@ -125,6 +134,7 @@ def export_data_type(
     since: date | None,
     until: date | None,
     full: bool,
+    days: int | None = None,
 ) -> bool:
     """Export one data type's windows, saving state after each window.
 
@@ -136,7 +146,7 @@ def export_data_type(
     last completed window has already been saved by the time an error
     surfaces.
     """
-    start, end = range_for(data_type, config, state, since, until, full)
+    start, end = range_for(data_type, config, state, since, until, full, days)
 
     for window_start, window_end in iter_windows(start, end, config.window_days):
         filter_str = build_filter(data_type, window_start, window_end)
@@ -171,6 +181,8 @@ class ExportResult:
     exported: list[str] = field(default_factory=list)
     skipped_ungranted: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    csv_path: Path | None = None
+    csv_days: int = 0
 
 
 def run_export(
@@ -181,6 +193,7 @@ def run_export(
     since: date | None = None,
     until: date | None = None,
     full: bool = False,
+    days: int | None = None,
 ) -> ExportResult:
     state = load_state(config.state_path)
     granted, ungranted = split_by_granted_scope(data_types, granted_scopes)
@@ -191,7 +204,7 @@ def run_export(
     result = ExportResult(skipped_ungranted=[dt.id for dt in ungranted])
     for dt in granted:
         try:
-            ok = export_data_type(client, config, dt, state, since, until, full)
+            ok = export_data_type(client, config, dt, state, since, until, full, days)
         except ApiError as exc:
             # A real full backfill showed this matters: one type running out
             # of retries (e.g. under sustained rate limiting) used to abort
@@ -202,5 +215,10 @@ def run_export(
             print(f"{dt.id}: stopped after repeated errors, skipping. {exc}", file=sys.stderr)
             ok = False
         (result.exported if ok else result.failed).append(dt.id)
+
+    # Rebuild the day-level CSV from whatever raw data is on disk, regardless
+    # of which types this particular run touched — it's a full rescan, not
+    # an incremental merge (see write_daily_csv's docstring).
+    result.csv_path, result.csv_days = write_daily_csv(config)
 
     return result

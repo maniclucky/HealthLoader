@@ -7,8 +7,9 @@ files.
 
 It exports steps, heart rate, sleep, weight, exercise sessions, and 30+ other
 data types across six categories (activity & fitness, health metrics, sleep,
-nutrition, ECG, irregular rhythm notifications), backfilling one year of
-history on first run and staying up to date on every rerun after that.
+nutrition, ECG, irregular rhythm notifications), backfilling the last 30 days
+of history on first run (up to a year with `--days`) and staying up to date
+on every rerun after that.
 
 ## 1. Prerequisites: Google Cloud setup
 
@@ -82,7 +83,7 @@ code 2 instead, printing `Sign-in required. Run: fitthing auth`.
 
 ```bash
 fitthing types      # list every exportable data type and whether it's granted
-fitthing export      # first run: backfills 1 year; every rerun: catches up since last time
+fitthing export      # first run: backfills last 30 days; every rerun: catches up since last time
 ```
 
 Useful flags:
@@ -90,6 +91,7 @@ Useful flags:
 - `--types steps,weight,sleep` — export only specific data types (default: all granted types)
 - `--since YYYY-MM-DD` / `--until YYYY-MM-DD` — override the date range
 - `--full` — ignore saved sync state and re-backfill from scratch
+- `--days N` — on a fresh backfill (no prior state, or with `--full`), backfill N days instead of the default 30 (max 365)
 
 Rerun `fitthing export` any time — it's safe and idempotent. It re-checks
 the last 3 days of any previous run (devices sometimes sync late) and picks
@@ -108,7 +110,7 @@ password — no separate app registration, unlike the Google setup above.
 
 ```bash
 fitthing cronometer-auth      # prompts for your Cronometer username/password
-fitthing cronometer-export    # first run: backfills 1 year; every rerun: catches up
+fitthing cronometer-export    # first run: backfills last 30 days; every rerun: catches up
 ```
 
 `cronometer-auth` signs in once and saves both the session
@@ -118,8 +120,8 @@ credentials (`secrets/cronometer.json`, `chmod 600`) — unless you set
 which is the no-storage-on-disk option. `cronometer-export` reuses the
 cached session and only re-authenticates if it's expired.
 
-Same `--since`, `--until`, and `--full` flags as `export` above, and the
-same "today is always excluded" rule.
+Same `--since`, `--until`, `--full`, and `--days` flags as `export` above,
+and the same "today is always excluded" rule.
 
 **Cronometer's export is capped at ~10/day, personal use only.** Unlike the
 Google path, this is never windowed — one request covers the whole
@@ -184,20 +186,63 @@ e.g. `data/raw/steps/2026-01-01_2026-01-15.json`, containing:
 and `secrets/` are gitignored — nothing personal ever gets committed.
 
 Data is saved as-is from the API (no flattening or reformatting), so nothing
-is lost — you can always post-process it into CSV or another format later.
+is lost — you can post-process any type not covered below into CSV or
+another format yourself.
 
 **Not exported:** `food` and `food-measurement-unit` — these turned out to
 be Google's global reference catalogs (a food/nutrition database), not your
 personal logs. `nutrition-log` (what you actually logged) is exported
 normally.
 
+### Day-level CSV
+
+Every `fitthing export` run also rebuilds `data/health/daily.csv`: columns
+`Energy (kcal)`, `Protein (g)`, `Carbs (g)`, `Fat (g)`, `Weight (lbs)`,
+`Body Fat (%)`, `Steps`, `Energy Burned (kcal)`, one row per calendar day,
+covering the trailing `csv_days` days (default 30, in `config.toml`) —
+**every** day in that window gets a row, even with no data at all, so gaps
+are visible rather than silently missing.
+
+Sources:
+- Nutrition columns come from Cronometer's `data/nutrition/daily.json`.
+- The rest come from rescanning whatever raw weight/body-fat/steps/
+  active-energy-burned JSON is currently on disk (not just what this run
+  fetched) — weight and body fat average same-day samples; steps and energy
+  burned are summed.
+
+Steps and energy burned are summed only from the source app(s) listed in
+`csv_device_packages` in `config.toml` (default: `com.gdjztech.ringconn`,
+a single wearable) — otherwise a phone and a ring both reporting the same
+walk would double it. Weight and body fat aren't filtered. Set
+`csv_device_packages = []` to sum across every source instead.
+
+**Gap-filling**, applied after everything above:
+- A missing **weight/body fat** day is linearly interpolated between the
+  nearest known reading before and after it. A leading or trailing gap (no
+  reading on one side within the window) is left blank rather than
+  extrapolated.
+- A missing **nutrition** day (nothing at all logged to Cronometer) is
+  filled from `target_settings_path` in `config.toml` (default
+  `targetSettings.json`, gitignored — a small JSON file of your own daily
+  targets: `{"calories": 2531, "protein": 177, "carbs": 305, "fat": 67}`).
+  A day that *was* logged is never overridden, even partially. No file, or
+  a key it doesn't have, just leaves that cell blank.
+- Steps and energy burned are never filled either way — there's no sane
+  default for "how many steps did I take."
+
+This is a full rebuild every run, not an incremental merge — necessary for
+the gap-filling above to be correct, and because incremental Google syncs
+re-fetch the last few days on every run (see `export`'s overlap behavior
+above): the freshest fetch for a given day always wins, so re-running never
+double-counts a day even if two raw window files on disk cover it.
+
 ## Repository layout
 
 - `agent-notes/` — shared reference space for AI agents (and humans). See `agent-notes/README.md`.
 - `src/fitthing/` — the `fitthing` package; the Google Health path (`client.py`, `datatypes.py`,
-  `windows.py`, `export.py`) and `src/fitthing/cronometer/` (`auth.py`, `client.py`, `parse.py`,
-  `export.py`) are independent data sources that don't share code, since they have almost nothing
-  in common beyond "download health data on a schedule."
+  `windows.py`, `export.py`, `aggregate.py`) and `src/fitthing/cronometer/` (`auth.py`, `client.py`,
+  `parse.py`, `export.py`) are independent data sources that don't share code, since they have
+  almost nothing in common beyond "download health data on a schedule."
 - `tests/` — pytest suite (no network calls).
 - `config.example.toml` — copy to `config.toml` (gitignored) and edit.
 - `secrets/`, `data/` — gitignored; created locally, never committed.

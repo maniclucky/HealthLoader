@@ -20,9 +20,10 @@ from fitthing.cronometer.auth import (
     sign_in,
 )
 from fitthing.cronometer.client import CronometerClient, CronometerClientError, ExportCapReached
+from fitthing.cronometer.export import MAX_BACKFILL_DAYS as CRONOMETER_MAX_BACKFILL_DAYS
 from fitthing.cronometer.export import run_cronometer_export, run_cronometer_import
 from fitthing.datatypes import REGISTRY, resolve
-from fitthing.export import run_export
+from fitthing.export import MAX_BACKFILL_DAYS, run_export
 
 
 def build_parser():
@@ -51,6 +52,14 @@ def build_parser():
     export_parser.add_argument(
         "--full", action="store_true", help="Ignore saved state and re-backfill from scratch."
     )
+    export_parser.add_argument(
+        "--days",
+        type=int,
+        help=(
+            "Days to backfill on a fresh run with no prior state (default 30, "
+            f"max {MAX_BACKFILL_DAYS}). Ignored once state exists, unless --full."
+        ),
+    )
 
     cronometer_export_parser = subparsers.add_parser(
         "cronometer-export", help="Download Cronometer daily calories/macros to disk."
@@ -59,6 +68,14 @@ def build_parser():
     cronometer_export_parser.add_argument("--until", help="End date (YYYY-MM-DD), default: today.")
     cronometer_export_parser.add_argument(
         "--full", action="store_true", help="Ignore saved state and re-backfill from scratch."
+    )
+    cronometer_export_parser.add_argument(
+        "--days",
+        type=int,
+        help=(
+            "Days to backfill on a fresh run with no prior state (default 30, "
+            f"max {CRONOMETER_MAX_BACKFILL_DAYS}). Ignored once state exists, unless --full."
+        ),
     )
 
     cronometer_import_parser = subparsers.add_parser(
@@ -114,6 +131,10 @@ def cmd_cronometer_auth(args, config: Config) -> int:
 
 
 def cmd_cronometer_export(args, config: Config) -> int:
+    if args.days is not None and not (1 <= args.days <= CRONOMETER_MAX_BACKFILL_DAYS):
+        print(f"--days must be between 1 and {CRONOMETER_MAX_BACKFILL_DAYS}.", file=sys.stderr)
+        return 2
+
     creds = resolve_credentials(config.cronometer, interactive=_interactive(args))
     client = CronometerClient(config.cronometer, creds)
 
@@ -121,7 +142,9 @@ def cmd_cronometer_export(args, config: Config) -> int:
     until = date.fromisoformat(args.until) if args.until else None
 
     try:
-        result = run_cronometer_export(client, config, since=since, until=until, full=args.full)
+        result = run_cronometer_export(
+            client, config, since=since, until=until, full=args.full, days=args.days
+        )
     except ExportCapReached as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -160,6 +183,10 @@ def cmd_types(args, config: Config) -> int:
 
 
 def cmd_export(args, config: Config) -> int:
+    if args.days is not None and not (1 <= args.days <= MAX_BACKFILL_DAYS):
+        print(f"--days must be between 1 and {MAX_BACKFILL_DAYS}.", file=sys.stderr)
+        return 2
+
     creds = ensure_signed_in(config, ALL_SCOPES, interactive=_interactive(args))
     granted_scopes = set(creds.scopes or [])
 
@@ -176,7 +203,14 @@ def cmd_export(args, config: Config) -> int:
     client = HealthClient(creds, request_delay_seconds=config.request_delay_seconds)
     try:
         result = run_export(
-            client, config, data_types, granted_scopes, since=since, until=until, full=args.full
+            client,
+            config,
+            data_types,
+            granted_scopes,
+            since=since,
+            until=until,
+            full=args.full,
+            days=args.days,
         )
     except ApiError as exc:
         print(f"Export stopped: {exc}", file=sys.stderr)
@@ -188,6 +222,7 @@ def cmd_export(args, config: Config) -> int:
         f"{len(result.failed)} failed.",
         file=sys.stderr,
     )
+    print(f"Wrote {result.csv_days} day(s) to {result.csv_path}.", file=sys.stderr)
     return 1 if result.failed else 0
 
 

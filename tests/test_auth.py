@@ -20,6 +20,9 @@ def make_config(tmp_path: Path, client_secret_exists: bool = True) -> Config:
         data_types="all",
         window_days=14,
         request_delay_seconds=0.0,
+        csv_device_packages=[],
+        csv_days=30,
+        target_settings_path=tmp_path / "targetSettings.json",
     )
 
 

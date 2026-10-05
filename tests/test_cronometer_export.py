@@ -29,6 +29,9 @@ def make_config(tmp_path: Path, start_date: str | None = None) -> Config:
         data_types="all",
         window_days=14,
         request_delay_seconds=0.0,
+        csv_device_packages=[],
+        csv_days=30,
+        target_settings_path=tmp_path / "targetSettings.json",
         cronometer=CronometerConfig(
             enabled=True,
             credentials_path=tmp_path / "secrets" / "cronometer.json",
@@ -54,7 +57,7 @@ class FakeClient:
 # --- range_for ---
 
 
-def test_first_run_backfills_default_365_days():
+def test_first_run_backfills_default_30_days():
     config = CronometerConfig(
         enabled=True,
         credentials_path=Path("x"),
@@ -69,7 +72,43 @@ def test_first_run_backfills_default_365_days():
     start, end = range_for(config, state={}, since=None, until=until, full=False)
 
     assert end == until
+    assert start == until - timedelta(days=30)
+
+
+def test_first_run_days_override_widens_backfill():
+    config = CronometerConfig(
+        enabled=True,
+        credentials_path=Path("x"),
+        session_path=Path("y"),
+        start_date=None,
+        gwt_module_base="b",
+        gwt_permutation="p",
+        request_delay_seconds=0.0,
+    )
+    until = date(2020, 9, 18)
+
+    start, end = range_for(config, state={}, since=None, until=until, full=False, days=365)
+
+    assert end == until
     assert start == until - timedelta(days=365)
+
+
+def test_configured_start_date_wins_over_days_override():
+    config = CronometerConfig(
+        enabled=True,
+        credentials_path=Path("x"),
+        session_path=Path("y"),
+        start_date="2025-01-01",
+        gwt_module_base="b",
+        gwt_permutation="p",
+        request_delay_seconds=0.0,
+    )
+
+    start, end = range_for(
+        config, state={}, since=None, until=date(2020, 9, 18), full=False, days=365
+    )
+
+    assert start == date(2025, 1, 1)
 
 
 def test_first_run_uses_configured_start_date():
@@ -120,7 +159,7 @@ def test_full_flag_ignores_state():
 
     start, end = range_for(config, state, since=None, until=date(2020, 9, 18), full=True)
 
-    assert start == date(2020, 9, 18) - timedelta(days=365)
+    assert start == date(2020, 9, 18) - timedelta(days=30)
 
 
 def test_until_defaults_to_yesterday_local_not_today():
