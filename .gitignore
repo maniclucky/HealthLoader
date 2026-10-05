@@ -30,3 +30,10 @@ venv/
 config.toml
 secrets/
 data/
+
+# Personal analysis outputs, notebooks, and targets (contain health data)
+*.csv
+!tests/fixtures/*.csv
+*.ipynb
+.ipynb_checkpoints/
+targetSettings.json
