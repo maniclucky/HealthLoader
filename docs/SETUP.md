@@ -142,10 +142,11 @@ Cronometer redeploys their frontend and automated sign-in starts failing
 outright (see below).
 
 **What's stored:** `data/nutrition/daily.json`, one entry per date —
-`calories_kcal`, `protein_g`, `carbs_g`, `fat_g` — plus the untouched raw
-CSV at `data/raw/cronometer-daily-summary/{start}_{end}.csv`. This is
-deliberately daily totals only: no per-food detail, no micronutrients, no
-Cronometer biometrics/exercise (weight and activity already come from
+`calories_kcal`, `protein_g`, `carbs_g`, `fat_g`, plus a `nutrients` map of
+every other numeric column in the export (vitamins, minerals, fiber, ...) —
+and the untouched raw CSV at
+`data/raw/cronometer-daily-summary/{start}_{end}.csv`. This is daily totals
+only: no per-food detail, no Cronometer biometrics/exercise (weight and activity already come from
 Google Health above). Cronometer's days are your local calendar days,
 already summed by Cronometer — not the UTC windows Google's `nutrition-log`
 uses, so the two aren't merged or reconciled; if you log in both places,
@@ -159,6 +160,21 @@ to re-capture the current values from your browser's DevTools and update
 `config.toml` (`gwt_permutation`) and `src/fitthing/cronometer/auth.py`
 (the request body templates). Until you do, `cronometer-import` still
 works from a manually exported CSV.
+
+## 6. Pull everything at once
+
+```bash
+fitthing sync          # Cronometer, then Google Health, then rebuild daily.csv
+fitthing sync --full   # re-backfill both sources from scratch
+fitthing sync --days 90
+```
+
+`sync` runs the same pulls as `cronometer-export` and `export`, in that
+order, so the CSV rebuilt at the end includes the fresh nutrition. If one
+source fails (expired sign-in, network, API errors) the other still runs and
+the CSV is still rebuilt from whatever is on disk; the exit code is 1 if
+either source failed. Sign in to both first (`fitthing auth`,
+`fitthing cronometer-auth`).
 
 ## Output format
 
@@ -196,24 +212,33 @@ normally.
 
 ### Day-level CSV
 
-Every `fitthing export` run also rebuilds `data/health/daily.csv`: columns
-`Energy (kcal)`, `Protein (g)`, `Carbs (g)`, `Fat (g)`, `Weight (lbs)`,
-`Body Fat (%)`, `Steps`, `Energy Burned (kcal)`, one row per calendar day,
+Every `fitthing export` or `fitthing sync` run also rebuilds
+`data/health/daily.csv`: columns `Energy (kcal)`, `Protein (g)`,
+`Carbs (g)`, `Fat (g)`, `Weight (lbs)`, `Body Fat (%)`, `Steps`,
+`Energy Burned (kcal)`, `Distance (mi)`, `Avg Heart Rate (bpm)`,
+`Resting Heart Rate (bpm)`, `SpO2 (%)`, `Sleep (hrs)`, `Exercise (min)`,
+then every other Cronometer nutrient (alphabetical), one row per calendar day,
 covering the trailing `csv_days` days (default 30, in `config.toml`) —
 **every** day in that window gets a row, even with no data at all, so gaps
 are visible rather than silently missing.
 
 Sources:
 - Nutrition columns come from Cronometer's `data/nutrition/daily.json`.
-- The rest come from rescanning whatever raw weight/body-fat/steps/
-  active-energy-burned JSON is currently on disk (not just what this run
-  fetched) — weight and body fat average same-day samples; steps and energy
-  burned are summed.
+  Days merged before nutrients were stored only have the four core macros;
+  `fitthing cronometer-export --full` (or `cronometer-import` of the raw
+  CSVs) fills in the rest.
+- The rest come from rescanning whatever raw Google JSON is currently on
+  disk (not just what this run fetched). Weight, body fat, heart rate,
+  resting heart rate, and SpO2 average same-day values; steps, energy
+  burned, distance, sleep, and exercise are summed. Sleep is credited to
+  the local day the session ended (the morning you woke up) and counts
+  minutes asleep, naps included. Exercise counts active duration.
 
 Steps and energy burned are summed only from the source app(s) listed in
 `csv_device_packages` in `config.toml` (default: `com.gdjztech.ringconn`,
 a single wearable) — otherwise a phone and a ring both reporting the same
-walk would double it. Weight and body fat aren't filtered. Set
+walk would double it. No other column is filtered — distance in
+particular comes from phone and treadmill apps, not the ring. Set
 `csv_device_packages = []` to sum across every source instead.
 
 **Gap-filling**, applied after everything above:
@@ -227,7 +252,7 @@ walk would double it. Weight and body fat aren't filtered. Set
   targets: `{"calories": 2200, "protein": 150, "carbs": 250, "fat": 70}`).
   A day that *was* logged is never overridden, even partially. No file, or
   a key it doesn't have, just leaves that cell blank.
-- Steps and energy burned are never filled either way — there's no sane
+- Steps, energy burned, the other Google columns, and the extra nutrients are never filled either way — there's no sane
   default for "how many steps did I take."
 
 This is a full rebuild every run, not an incremental merge — necessary for

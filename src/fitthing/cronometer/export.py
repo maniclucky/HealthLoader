@@ -69,6 +69,7 @@ def merge_daily_nutrition(existing: dict, rows: list[DailyNutrition]) -> dict:
             "protein_g": row.protein_g,
             "carbs_g": row.carbs_g,
             "fat_g": row.fat_g,
+            "nutrients": row.nutrients,
         }
     return merged
 

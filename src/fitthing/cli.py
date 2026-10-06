@@ -24,6 +24,7 @@ from fitthing.cronometer.export import MAX_BACKFILL_DAYS as CRONOMETER_MAX_BACKF
 from fitthing.cronometer.export import run_cronometer_export, run_cronometer_import
 from fitthing.datatypes import REGISTRY, resolve
 from fitthing.export import MAX_BACKFILL_DAYS, run_export
+from fitthing.sync import run_sync
 
 
 def build_parser():
@@ -75,6 +76,23 @@ def build_parser():
         help=(
             "Days to backfill on a fresh run with no prior state (default 30, "
             f"max {CRONOMETER_MAX_BACKFILL_DAYS}). Ignored once state exists, unless --full."
+        ),
+    )
+
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Pull Cronometer and Google Health, then rebuild data/health/daily.csv.",
+    )
+    sync_parser.add_argument(
+        "--full", action="store_true", help="Ignore saved state and re-backfill both sources."
+    )
+    sync_parser.add_argument(
+        "--days",
+        type=int,
+        help=(
+            "Days to backfill on a fresh run with no prior state (default 30, "
+            f"max {min(MAX_BACKFILL_DAYS, CRONOMETER_MAX_BACKFILL_DAYS)}). "
+            "Ignored once state exists, unless --full."
         ),
     )
 
@@ -226,6 +244,31 @@ def cmd_export(args, config: Config) -> int:
     return 1 if result.failed else 0
 
 
+def cmd_sync(args, config: Config) -> int:
+    max_days = min(MAX_BACKFILL_DAYS, CRONOMETER_MAX_BACKFILL_DAYS)
+    if args.days is not None and not (1 <= args.days <= max_days):
+        print(f"--days must be between 1 and {max_days}.", file=sys.stderr)
+        return 2
+
+    result = run_sync(config, interactive=_interactive(args), full=args.full, days=args.days)
+
+    if result.cronometer is not None:
+        print(
+            f"Cronometer: {result.cronometer.days_updated} day(s) updated, range "
+            f"{result.cronometer.range_start.isoformat()}→{result.cronometer.range_end.isoformat()}.",
+            file=sys.stderr,
+        )
+    if result.google is not None:
+        print(
+            f"Google Health: exported {len(result.google.exported)} type(s); "
+            f"{len(result.google.skipped_ungranted)} skipped (scope not granted); "
+            f"{len(result.google.failed)} failed.",
+            file=sys.stderr,
+        )
+    print(f"Wrote {result.csv_days} day(s) to {result.csv_path}.", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -248,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_export(args, config)
     if args.command == "cronometer-export":
         return cmd_cronometer_export(args, config)
+    if args.command == "sync":
+        return cmd_sync(args, config)
     if args.command == "cronometer-import":
         return cmd_cronometer_import(args, config)
 

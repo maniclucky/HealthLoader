@@ -12,7 +12,7 @@ from __future__ import annotations
 import csv
 import io
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date as date_cls
 
 KJ_PER_KCAL = 4.184
@@ -25,6 +25,10 @@ _FAT_CANDIDATES = ["Fat (g)", "Total Fat (g)", "Fat"]
 
 _KJ_HEADERS = {"Energy (kJ)"}
 
+# Cronometer's export response carries no charset, so requests decodes it as
+# ISO-8859-1 and the UTF-8 "µ" in headers like "Folate (µg)" arrives as "Âµ".
+_MOJIBAKE_FIXES = {"Âµ": "µ"}
+
 
 @dataclass(frozen=True)
 class DailyNutrition:
@@ -33,6 +37,10 @@ class DailyNutrition:
     protein_g: float | None
     carbs_g: float | None
     fat_g: float | None
+    # Every other numeric column in the export (vitamins, minerals, fiber,
+    # ...), keyed by its cleaned-up CSV header. Columns can vary with the
+    # account's settings, so these are carried through as-is, not named.
+    nutrients: dict[str, float | None] = field(default_factory=dict)
 
 
 def _match_column(field_name: str, candidates: list[str], headers: list[str]) -> str:
@@ -43,6 +51,12 @@ def _match_column(field_name: str, candidates: list[str], headers: list[str]) ->
         f"Cronometer CSV is missing a '{field_name}' column (tried: {candidates}). "
         f"Headers actually present: {headers}"
     )
+
+
+def _clean_header(header: str) -> str:
+    for bad, good in _MOJIBAKE_FIXES.items():
+        header = header.replace(bad, good)
+    return header.strip()
 
 
 def _parse_float(raw: str | None) -> float | None:
@@ -69,7 +83,7 @@ def parse_daily_summary(
     text = csv_text.lstrip("﻿")
     reader = csv.reader(io.StringIO(text))
     try:
-        headers = next(reader)
+        headers = [_clean_header(h) for h in next(reader)]
     except StopIteration:
         return []
 
@@ -78,6 +92,9 @@ def parse_daily_summary(
     protein_col = _match_column("protein", _PROTEIN_CANDIDATES, headers)
     carbs_col = _match_column("carbs", _CARBS_CANDIDATES, headers)
     fat_col = _match_column("fat", _FAT_CANDIDATES, headers)
+
+    core_cols = {date_col, calories_col, protein_col, carbs_col, fat_col}
+    extra_cols = [h for h in headers if h not in core_cols]
 
     is_kj = calories_col in _KJ_HEADERS
     if is_kj:
@@ -117,6 +134,19 @@ def parse_daily_summary(
                 protein_g=_parse_float(record.get(protein_col)),
                 carbs_g=_parse_float(record.get(carbs_col)),
                 fat_g=_parse_float(record.get(fat_col)),
+                nutrients=_extra_nutrients(record, extra_cols),
             )
         )
     return results
+
+
+def _extra_nutrients(record: dict[str, str], columns: list[str]) -> dict[str, float | None]:
+    """Numeric values for the non-core columns; non-numeric ones (e.g.
+    Cronometer's "Completed" true/false flag) are left out."""
+    result: dict[str, float | None] = {}
+    for column in columns:
+        try:
+            result[column] = _parse_float(record.get(column))
+        except ValueError:
+            continue
+    return result

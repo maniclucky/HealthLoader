@@ -3,6 +3,8 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from fitthing.aggregate import build_combined_rows, build_daily_rows, write_daily_csv
 from fitthing.config import Config
 
@@ -385,8 +387,14 @@ def test_write_daily_csv_writes_header_and_blank_cells_for_missing_values(tmp_pa
         "Body Fat (%)",
         "Steps",
         "Energy Burned (kcal)",
+        "Distance (mi)",
+        "Avg Heart Rate (bpm)",
+        "Resting Heart Rate (bpm)",
+        "SpO2 (%)",
+        "Sleep (hrs)",
+        "Exercise (min)",
     ]
-    assert rows[1] == ["2026-01-01", "", "", "", "", "", "", "100", ""]
+    assert rows[1] == ["2026-01-01", "", "", "", "", "", "", "100", "", "", "", "", "", "", ""]
 
 
 def test_write_daily_csv_with_no_data_still_writes_the_full_window_blank(tmp_path):
@@ -426,3 +434,80 @@ def test_write_daily_csv_is_a_full_rebuild_not_an_incremental_merge(tmp_path):
     assert n == 2
     assert len(rows) == 3  # header + two day rows, not four
     assert rows[1][7] == "200"
+
+
+def _local_interval(start: str, end: str, offset: str = "-18000s") -> dict:
+    return {"startTime": start, "startUtcOffset": offset, "endTime": end, "endUtcOffset": offset}
+
+
+def test_extra_google_columns_aggregate_per_day(tmp_path):
+    config = make_config(tmp_path, csv_days=1)
+    civil = {"date": {"year": 2026, "month": 1, "day": 1}}
+    _write_window(config.raw_dir, "distance", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
+        {"dataSource": {}, "distance": {"interval": {"civilStartTime": civil}, "millimeters": "804672"}},
+        {"dataSource": {}, "distance": {"interval": {"civilStartTime": civil}, "millimeters": "804672"}},
+    ])
+    _write_window(config.raw_dir, "heart-rate", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
+        {"dataSource": {}, "heartRate": {"sampleTime": {"civilTime": civil}, "beatsPerMinute": "60"}},
+        {"dataSource": {}, "heartRate": {"sampleTime": {"civilTime": civil}, "beatsPerMinute": "80"}},
+    ])
+    _write_window(config.raw_dir, "daily-resting-heart-rate", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
+        {"dataSource": {}, "dailyRestingHeartRate": {"date": civil["date"], "beatsPerMinute": "55"}},
+    ])
+    _write_window(config.raw_dir, "daily-oxygen-saturation", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
+        {"dataSource": {}, "dailyOxygenSaturation": {"date": civil["date"], "averagePercentage": 96.5}},
+    ])
+    _write_window(config.raw_dir, "exercise", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
+        {"dataSource": {}, "exercise": {
+            "interval": _local_interval("2026-01-01T15:00:00Z", "2026-01-01T16:00:00Z"),
+            "activeDuration": "1800s",
+        }},
+        # No activeDuration: falls back to the interval length.
+        {"dataSource": {}, "exercise": {"interval": _local_interval("2026-01-01T20:00:00Z", "2026-01-01T20:15:00Z")}},
+    ])
+
+    row = build_combined_rows(config, end=date(2026, 1, 1))[date(2026, 1, 1)]
+
+    assert row["Distance (mi)"] == pytest.approx(1.0)
+    assert row["Avg Heart Rate (bpm)"] == 70
+    assert row["Resting Heart Rate (bpm)"] == 55
+    assert row["SpO2 (%)"] == 96.5
+    assert row["Exercise (min)"] == 45
+
+
+def test_sleep_counts_toward_the_local_day_it_ended(tmp_path):
+    config = make_config(tmp_path, csv_days=2)
+    # 22:00 Jan 1 to 06:00 Jan 2 local (UTC-5): credited to Jan 2, the
+    # morning it ended, along with that afternoon's nap.
+    night = {"dataSource": {}, "sleep": {
+        "interval": _local_interval("2026-01-02T03:00:00Z", "2026-01-02T11:00:00Z"),
+        "summary": {"minutesAsleep": "450"},
+    }}
+    nap = {"dataSource": {}, "sleep": {
+        "interval": _local_interval("2026-01-02T19:00:00Z", "2026-01-02T19:30:00Z"),
+        "summary": {"minutesAsleep": "30"},
+    }}
+    _write_window(config.raw_dir, "sleep", "2026-01-01", "2026-01-03", "2026-01-03T00:00:00Z", [night, nap])
+
+    rows = build_combined_rows(config, end=date(2026, 1, 2))
+
+    assert rows[date(2026, 1, 1)]["Sleep (hrs)"] is None
+    assert rows[date(2026, 1, 2)]["Sleep (hrs)"] == pytest.approx(8.0)
+
+
+def test_extra_cronometer_nutrients_become_columns_after_the_core_ones(tmp_path):
+    config = make_config(tmp_path, csv_days=2, target_settings={"calories": 2500})
+    _write_daily_nutrition(config.output_dir, {
+        "2026-01-01": {"calories_kcal": 2000, "protein_g": 100, "carbs_g": 200, "fat_g": 60,
+                       "nutrients": {"Sodium (mg)": 2300, "Fiber (g)": 30}},
+    })
+
+    path, _ = write_daily_csv(config, end=date(2026, 1, 2))
+
+    with path.open(newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert list(rows[0])[-2:] == ["Fiber (g)", "Sodium (mg)"]
+    assert rows[0]["Sodium (mg)"] == "2300.00"
+    # Unlogged day: core calories are target-filled, extra nutrients stay blank.
+    assert rows[1]["Energy (kcal)"] == "2500.00"
+    assert rows[1]["Sodium (mg)"] == ""

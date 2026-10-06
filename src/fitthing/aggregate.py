@@ -20,7 +20,7 @@ import csv
 import json
 import os
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -50,6 +50,9 @@ TARGET_SETTINGS_KEYS: dict[str, str] = {
 # calories burned, so those are left blank when missing.
 INTERPOLATED_COLUMNS = ("Weight (lbs)", "Body Fat (%)")
 
+# Formats for columns not listed here (the extra Cronometer nutrients) fall
+# back to DEFAULT_FORMAT.
+DEFAULT_FORMAT = "float2"
 COLUMN_FORMAT: dict[str, str] = {
     "Energy (kcal)": "float2",
     "Protein (g)": "float2",
@@ -59,12 +62,36 @@ COLUMN_FORMAT: dict[str, str] = {
     "Body Fat (%)": "float2",
     "Steps": "int",
     "Energy Burned (kcal)": "int",
+    "Distance (mi)": "float2",
+    "Avg Heart Rate (bpm)": "int",
+    "Resting Heart Rate (bpm)": "int",
+    "SpO2 (%)": "float2",
+    "Sleep (hrs)": "float2",
+    "Exercise (min)": "int",
 }
+
+MM_PER_MILE = 1_609_344
 
 
 def _civil_date(civil_time: dict) -> date:
     d = civil_time["date"]
     return date(d["year"], d["month"], d["day"])
+
+
+def _date_field(d: dict) -> date:
+    return date(d["year"], d["month"], d["day"])
+
+
+def _local_date(timestamp: str, utc_offset: str) -> date:
+    """Local calendar date of an RFC3339 UTC timestamp, given the API's
+    offset string (e.g. "-18000s"). Used for types whose intervals carry no
+    civil (local) time of their own: sleep and exercise."""
+    utc = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    return (utc + timedelta(seconds=int(utc_offset.rstrip("s")))).date()
+
+
+def _duration_seconds(duration: str) -> float:
+    return float(duration.rstrip("s"))
 
 
 def _package_name(point: dict) -> str | None:
@@ -92,6 +119,48 @@ def _extract_active_energy_burned(point: dict) -> tuple[date, float]:
     return _civil_date(e["interval"]["civilStartTime"]), float(e["kcal"])
 
 
+def _extract_distance(point: dict) -> tuple[date, float]:
+    d = point["distance"]
+    return _civil_date(d["interval"]["civilStartTime"]), float(d["millimeters"]) / MM_PER_MILE
+
+
+def _extract_heart_rate(point: dict) -> tuple[date, float]:
+    hr = point["heartRate"]
+    return _civil_date(hr["sampleTime"]["civilTime"]), float(hr["beatsPerMinute"])
+
+
+def _extract_resting_heart_rate(point: dict) -> tuple[date, float]:
+    r = point["dailyRestingHeartRate"]
+    return _date_field(r["date"]), float(r["beatsPerMinute"])
+
+
+def _extract_oxygen_saturation(point: dict) -> tuple[date, float]:
+    o = point["dailyOxygenSaturation"]
+    return _date_field(o["date"]), float(o["averagePercentage"])
+
+
+def _extract_sleep(point: dict) -> tuple[date, float]:
+    """Hours asleep, credited to the local date the session ended (the
+    morning you woke up), so one night lands on one row."""
+    s = point["sleep"]
+    interval = s["interval"]
+    day = _local_date(interval["endTime"], interval["endUtcOffset"])
+    return day, float(s["summary"]["minutesAsleep"]) / 60
+
+
+def _extract_exercise(point: dict) -> tuple[date, float]:
+    e = point["exercise"]
+    interval = e["interval"]
+    day = _local_date(interval["startTime"], interval["startUtcOffset"])
+    if "activeDuration" in e:
+        seconds = _duration_seconds(e["activeDuration"])
+    else:
+        start = datetime.fromisoformat(interval["startTime"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(interval["endTime"].replace("Z", "+00:00"))
+        seconds = (end - start).total_seconds()
+    return day, seconds / 60
+
+
 @dataclass(frozen=True)
 class Aggregator:
     data_type_id: str  # matches the raw_dir subfolder, e.g. "steps"
@@ -114,10 +183,29 @@ AGGREGATORS: list[Aggregator] = [
         filtered=True,
         extract=_extract_active_energy_burned,
     ),
+    # Not device-filtered: distance comes from the phone and treadmill apps,
+    # not the ring, and the rest have a single source today. See
+    # agent-notes/2026-10-06-sync-command.md.
+    Aggregator("distance", "Distance (mi)", "sum", "float2", filtered=False, extract=_extract_distance),
+    Aggregator("heart-rate", "Avg Heart Rate (bpm)", "mean", "int", filtered=False, extract=_extract_heart_rate),
+    Aggregator(
+        "daily-resting-heart-rate",
+        "Resting Heart Rate (bpm)",
+        "mean",
+        "int",
+        filtered=False,
+        extract=_extract_resting_heart_rate,
+    ),
+    Aggregator(
+        "daily-oxygen-saturation", "SpO2 (%)", "mean", "float2", filtered=False, extract=_extract_oxygen_saturation
+    ),
+    Aggregator("sleep", "Sleep (hrs)", "sum", "float2", filtered=False, extract=_extract_sleep),
+    Aggregator("exercise", "Exercise (min)", "sum", "int", filtered=False, extract=_extract_exercise),
 ]
 
-# Nutrition columns first, then the Google-sourced ones — matches the order
-# the original hand-built output.csv used.
+# Core nutrition columns first, then the Google-sourced ones — matches the
+# order the original hand-built output.csv used. The extra Cronometer
+# nutrients (see nutrient_columns) follow these.
 CSV_COLUMNS: list[str] = list(NUTRITION_COLUMNS.values()) + [a.column for a in AGGREGATORS]
 
 
@@ -208,6 +296,17 @@ def _load_nutrition(daily_json_path: Path) -> dict[date, dict]:
     return result
 
 
+def nutrient_columns(nutrition: dict[date, dict]) -> list[str]:
+    """Every extra Cronometer nutrient seen in any day, alphabetically.
+
+    Which columns exist depends on the account's Cronometer settings, and
+    days merged before nutrients were stored have none, so the set is the
+    union across days rather than a fixed list.
+    """
+    names = {name for values in nutrition.values() for name in values.get("nutrients", {})}
+    return sorted(names - set(CSV_COLUMNS), key=str.lower)
+
+
 def _load_target_settings(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -264,6 +363,7 @@ def build_combined_rows(
     packages = device_packages if device_packages is not None else config.csv_device_packages
     google_rows = build_daily_rows(config.raw_dir, packages)
     nutrition = _load_nutrition(config.output_dir / "nutrition" / "daily.json")
+    extra_columns = nutrient_columns(nutrition)
     targets = _load_target_settings(config.target_settings_path)
 
     rows: dict[date, dict[str, float | None]] = {}
@@ -275,6 +375,9 @@ def build_combined_rows(
         n = nutrition.get(day, {})
         for json_key, column in NUTRITION_COLUMNS.items():
             row[column] = n.get(json_key)
+        logged_nutrients = n.get("nutrients", {})
+        for column in extra_columns:
+            row[column] = logged_nutrients.get(column)
         rows[day] = row
 
     for column in INTERPOLATED_COLUMNS:
@@ -296,7 +399,7 @@ def build_combined_rows(
 def _format(column: str, value: float | None) -> str:
     if value is None:
         return ""
-    if COLUMN_FORMAT[column] == "int":
+    if COLUMN_FORMAT.get(column, DEFAULT_FORMAT) == "int":
         return str(round(value))
     return f"{value:.2f}"
 
@@ -314,16 +417,18 @@ def write_daily_csv(
     the only way to stay correct. Returns (path, row count).
     """
     rows = build_combined_rows(config, device_packages=device_packages, end=end)
+    any_row = next(iter(rows.values()), {})
+    columns = CSV_COLUMNS + [c for c in any_row if c not in CSV_COLUMNS]
 
     path = config.output_dir / DAILY_CSV_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(path.name + ".tmp")
     with tmp_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Date"] + CSV_COLUMNS)
+        writer.writerow(["Date"] + columns)
         for day in sorted(rows):
             row = rows[day]
-            writer.writerow([day.isoformat()] + [_format(column, row[column]) for column in CSV_COLUMNS])
+            writer.writerow([day.isoformat()] + [_format(column, row[column]) for column in columns])
     os.replace(tmp_path, path)
 
     return path, len(rows)

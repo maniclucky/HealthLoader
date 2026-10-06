@@ -274,6 +274,7 @@ def test_export_merges_into_daily_json(tmp_path):
         "protein_g": 100.0,
         "carbs_g": 200.0,
         "fat_g": 60.0,
+        "nutrients": {},
     }
 
 
