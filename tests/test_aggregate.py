@@ -387,14 +387,13 @@ def test_write_daily_csv_writes_header_and_blank_cells_for_missing_values(tmp_pa
         "Body Fat (%)",
         "Steps",
         "Energy Burned (kcal)",
-        "Distance (mi)",
         "Avg Heart Rate (bpm)",
         "Resting Heart Rate (bpm)",
         "SpO2 (%)",
         "Sleep (hrs)",
         "Exercise (min)",
     ]
-    assert rows[1] == ["2026-01-01", "", "", "", "", "", "", "100", "", "", "", "", "", "", ""]
+    assert rows[1] == ["2026-01-01", "", "", "", "", "", "", "100", "", "", "", "", "", ""]
 
 
 def test_write_daily_csv_with_no_data_still_writes_the_full_window_blank(tmp_path):
@@ -443,10 +442,6 @@ def _local_interval(start: str, end: str, offset: str = "-18000s") -> dict:
 def test_extra_google_columns_aggregate_per_day(tmp_path):
     config = make_config(tmp_path, csv_days=1)
     civil = {"date": {"year": 2026, "month": 1, "day": 1}}
-    _write_window(config.raw_dir, "distance", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
-        {"dataSource": {}, "distance": {"interval": {"civilStartTime": civil}, "millimeters": "804672"}},
-        {"dataSource": {}, "distance": {"interval": {"civilStartTime": civil}, "millimeters": "804672"}},
-    ])
     _write_window(config.raw_dir, "heart-rate", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
         {"dataSource": {}, "heartRate": {"sampleTime": {"civilTime": civil}, "beatsPerMinute": "60"}},
         {"dataSource": {}, "heartRate": {"sampleTime": {"civilTime": civil}, "beatsPerMinute": "80"}},
@@ -458,21 +453,19 @@ def test_extra_google_columns_aggregate_per_day(tmp_path):
         {"dataSource": {}, "dailyOxygenSaturation": {"date": civil["date"], "averagePercentage": 96.5}},
     ])
     _write_window(config.raw_dir, "exercise", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", [
-        {"dataSource": {}, "exercise": {
-            "interval": _local_interval("2026-01-01T15:00:00Z", "2026-01-01T16:00:00Z"),
-            "activeDuration": "1800s",
-        }},
-        # No activeDuration: falls back to the interval length.
+        {"dataSource": {}, "exercise": {"interval": _local_interval("2026-01-01T15:00:00Z", "2026-01-01T16:00:00Z")}},
+        # Overlaps the first by 15 min (phone + treadmill logging one walk):
+        # counted once, not summed.
+        {"dataSource": {}, "exercise": {"interval": _local_interval("2026-01-01T15:45:00Z", "2026-01-01T16:15:00Z")}},
         {"dataSource": {}, "exercise": {"interval": _local_interval("2026-01-01T20:00:00Z", "2026-01-01T20:15:00Z")}},
     ])
 
     row = build_combined_rows(config, end=date(2026, 1, 1))[date(2026, 1, 1)]
 
-    assert row["Distance (mi)"] == pytest.approx(1.0)
     assert row["Avg Heart Rate (bpm)"] == 70
     assert row["Resting Heart Rate (bpm)"] == 55
     assert row["SpO2 (%)"] == 96.5
-    assert row["Exercise (min)"] == 45
+    assert row["Exercise (min)"] == 90
 
 
 def test_sleep_counts_toward_the_local_day_it_ended(tmp_path):
@@ -511,3 +504,57 @@ def test_extra_cronometer_nutrients_become_columns_after_the_core_ones(tmp_path)
     # Unlogged day: core calories are target-filled, extra nutrients stay blank.
     assert rows[1]["Energy (kcal)"] == "2500.00"
     assert rows[1]["Sodium (mg)"] == ""
+
+
+# --- steps: ring primary, treadmill replaces it while running ---
+
+
+def _timed_steps(start: str, end: str, count: int, package: str) -> dict:
+    interval = _local_interval(start, end)
+    interval["civilStartTime"] = {"date": {"year": 2026, "month": 1, "day": 1}}
+    return {"dataSource": {"application": {"packageName": package}}, "steps": {"interval": interval, "count": str(count)}}
+
+
+def _steps_window(raw_dir: Path, points: list[dict]) -> None:
+    _write_window(raw_dir, "steps", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z", points)
+
+
+def test_treadmill_count_replaces_ring_during_the_session(tmp_path):
+    raw_dir = tmp_path / "raw"
+    _steps_window(raw_dir, [
+        _timed_steps("2026-01-01T14:00:00Z", "2026-01-01T14:30:00Z", 300, "ringconn"),  # before: kept
+        _timed_steps("2026-01-01T15:00:00Z", "2026-01-01T15:30:00Z", 1000, "ringconn"),  # inside: dropped
+        _timed_steps("2026-01-01T15:30:00Z", "2026-01-01T16:00:00Z", 400, "ringconn"),  # half inside: half kept
+        _timed_steps("2026-01-01T15:00:00Z", "2026-01-01T15:45:00Z", 4000, "treadmill"),
+        _timed_steps("2026-01-01T15:10:00Z", "2026-01-01T15:20:00Z", 999, "phone"),  # not a primary source
+    ])
+
+    rows = build_daily_rows(raw_dir, device_packages=["ringconn"], treadmill_packages=["treadmill"])
+
+    assert rows[date(2026, 1, 1)]["Steps"] == pytest.approx(300 + 200 + 4000)
+
+
+def test_overlapping_treadmill_records_are_one_session(tmp_path):
+    raw_dir = tmp_path / "raw"
+    # Same session uploaded twice with shifted start times (seen live).
+    _steps_window(raw_dir, [
+        _timed_steps("2026-01-01T13:00:00Z", "2026-01-01T14:30:00Z", 10050, "treadmill"),
+        _timed_steps("2026-01-01T14:00:00Z", "2026-01-01T15:30:00Z", 10050, "treadmill"),
+        _timed_steps("2026-01-01T13:30:00Z", "2026-01-01T14:00:00Z", 500, "ringconn"),
+    ])
+
+    rows = build_daily_rows(raw_dir, device_packages=["ringconn"], treadmill_packages=["treadmill"])
+
+    assert rows[date(2026, 1, 1)]["Steps"] == 10050
+
+
+def test_no_treadmill_packages_uses_the_primary_source_only(tmp_path):
+    raw_dir = tmp_path / "raw"
+    _steps_window(raw_dir, [
+        _timed_steps("2026-01-01T15:00:00Z", "2026-01-01T15:30:00Z", 1000, "ringconn"),
+        _timed_steps("2026-01-01T15:00:00Z", "2026-01-01T15:45:00Z", 4000, "treadmill"),
+    ])
+
+    rows = build_daily_rows(raw_dir, device_packages=["ringconn"], treadmill_packages=[])
+
+    assert rows[date(2026, 1, 1)]["Steps"] == 1000

@@ -215,7 +215,7 @@ normally.
 Every `fitthing export` or `fitthing sync` run also rebuilds
 `data/health/daily.csv`: columns `Energy (kcal)`, `Protein (g)`,
 `Carbs (g)`, `Fat (g)`, `Weight (lbs)`, `Body Fat (%)`, `Steps`,
-`Energy Burned (kcal)`, `Distance (mi)`, `Avg Heart Rate (bpm)`,
+`Energy Burned (kcal)`, `Avg Heart Rate (bpm)`,
 `Resting Heart Rate (bpm)`, `SpO2 (%)`, `Sleep (hrs)`, `Exercise (min)`,
 then every other Cronometer nutrient (alphabetical), one row per calendar day,
 covering the trailing `csv_days` days (default 30, in `config.toml`) —
@@ -229,17 +229,26 @@ Sources:
   CSVs) fills in the rest.
 - The rest come from rescanning whatever raw Google JSON is currently on
   disk (not just what this run fetched). Weight, body fat, heart rate,
-  resting heart rate, and SpO2 average same-day values; steps, energy
-  burned, distance, sleep, and exercise are summed. Sleep is credited to
-  the local day the session ended (the morning you woke up) and counts
-  minutes asleep, naps included. Exercise counts active duration.
+  resting heart rate, and SpO2 average same-day values; energy burned and
+  sleep are summed. Sleep is credited to the local day the session ended
+  (the morning you woke up) and counts minutes asleep, naps included.
+  Exercise is wall-clock minutes in any exercise session, with overlapping
+  sessions (e.g. phone and treadmill logging the same walk) counted once.
 
 Steps and energy burned are summed only from the source app(s) listed in
 `csv_device_packages` in `config.toml` (default: `com.gdjztech.ringconn`,
 a single wearable) — otherwise a phone and a ring both reporting the same
-walk would double it. No other column is filtered — distance in
-particular comes from phone and treadmill apps, not the ring. Set
-`csv_device_packages = []` to sum across every source instead.
+walk would double it. Set `csv_device_packages = []` to sum across every
+source instead.
+
+**Treadmill steps:** while a session from an app in
+`csv_treadmill_packages` (default `com.urevo.app`) is running, the
+treadmill's step count replaces the wearable's for that stretch. A ring
+misses steps when your hand is still, e.g. working at a walking desk. The
+ring logs steps in 30-minute buckets, so a bucket that's partly inside a
+session keeps only the share outside it. Overlapping treadmill records
+(the same session uploaded twice) count once. Energy burned is still
+ring-only; the treadmill doesn't report it.
 
 **Gap-filling**, applied after everything above:
 - A missing **weight/body fat** day is linearly interpolated between the

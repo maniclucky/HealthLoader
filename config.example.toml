@@ -39,6 +39,12 @@ request_delay_seconds = 0.5
 # list empty to sum across every source instead.
 csv_device_packages = ["com.gdjztech.ringconn"]
 
+# Treadmill app package names. While a treadmill session is running, its step
+# count replaces the wearable's for that stretch of time (a wrist/finger
+# wearable misses steps when your hand is still, e.g. at a walking desk).
+# Leave empty to use only csv_device_packages.
+csv_treadmill_packages = ["com.urevo.app"]
+
 # How many trailing days the CSV covers, ending yesterday. Every day in this
 # window gets a row even with no data at all, so gaps are visible for the
 # interpolation/target-filling below.

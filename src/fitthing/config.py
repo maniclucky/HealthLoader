@@ -18,6 +18,7 @@ DEFAULTS = {
     "window_days": 14,
     "request_delay_seconds": 0.5,
     "csv_device_packages": ["com.gdjztech.ringconn"],
+    "csv_treadmill_packages": ["com.urevo.app"],
     "csv_days": 30,
     "target_settings_path": "targetSettings.json",
 }
@@ -72,6 +73,7 @@ class Config:
     csv_device_packages: list[str]
     csv_days: int
     target_settings_path: Path
+    csv_treadmill_packages: list[str] = field(default_factory=lambda: list(DEFAULTS["csv_treadmill_packages"]))
     cronometer: CronometerConfig = field(default_factory=lambda: _load_cronometer_config({}))
 
     @property
@@ -118,5 +120,6 @@ def load_config(path: Path | None = None) -> Config:
         csv_device_packages=list(values["csv_device_packages"]),
         csv_days=int(values["csv_days"]),
         target_settings_path=Path(values["target_settings_path"]),
+        csv_treadmill_packages=list(values["csv_treadmill_packages"]),
         cronometer=_load_cronometer_config(values.get("cronometer", {})),
     )

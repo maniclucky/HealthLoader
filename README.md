@@ -8,7 +8,8 @@ your computer:
 - **Cronometer** (optional) — daily calories, protein, carbs, and fat.
 
 It also builds a day-level `data/health/daily.csv` combining weight, body fat,
-steps, energy burned, distance, heart rate, SpO2, sleep, exercise, and every
+steps (ring, with treadmill counts during treadmill sessions), energy burned,
+heart rate, SpO2, sleep, exercise, and every
 Cronometer nutrient, with small gaps filled in.
 
 Reruns are incremental: each run catches up from where the last one stopped

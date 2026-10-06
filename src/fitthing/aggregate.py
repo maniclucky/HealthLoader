@@ -62,15 +62,12 @@ COLUMN_FORMAT: dict[str, str] = {
     "Body Fat (%)": "float2",
     "Steps": "int",
     "Energy Burned (kcal)": "int",
-    "Distance (mi)": "float2",
     "Avg Heart Rate (bpm)": "int",
     "Resting Heart Rate (bpm)": "int",
     "SpO2 (%)": "float2",
     "Sleep (hrs)": "float2",
     "Exercise (min)": "int",
 }
-
-MM_PER_MILE = 1_609_344
 
 
 def _civil_date(civil_time: dict) -> date:
@@ -82,16 +79,15 @@ def _date_field(d: dict) -> date:
     return date(d["year"], d["month"], d["day"])
 
 
+def _utc(timestamp: str) -> datetime:
+    return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+
+
 def _local_date(timestamp: str, utc_offset: str) -> date:
     """Local calendar date of an RFC3339 UTC timestamp, given the API's
     offset string (e.g. "-18000s"). Used for types whose intervals carry no
     civil (local) time of their own: sleep and exercise."""
-    utc = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    return (utc + timedelta(seconds=int(utc_offset.rstrip("s")))).date()
-
-
-def _duration_seconds(duration: str) -> float:
-    return float(duration.rstrip("s"))
+    return (_utc(timestamp) + timedelta(seconds=int(utc_offset.rstrip("s")))).date()
 
 
 def _package_name(point: dict) -> str | None:
@@ -109,19 +105,9 @@ def _extract_body_fat(point: dict) -> tuple[date, float]:
     return _civil_date(bf["sampleTime"]["civilTime"]), bf["percentage"]
 
 
-def _extract_steps(point: dict) -> tuple[date, float]:
-    s = point["steps"]
-    return _civil_date(s["interval"]["civilStartTime"]), float(s["count"])
-
-
 def _extract_active_energy_burned(point: dict) -> tuple[date, float]:
     e = point["activeEnergyBurned"]
     return _civil_date(e["interval"]["civilStartTime"]), float(e["kcal"])
-
-
-def _extract_distance(point: dict) -> tuple[date, float]:
-    d = point["distance"]
-    return _civil_date(d["interval"]["civilStartTime"]), float(d["millimeters"]) / MM_PER_MILE
 
 
 def _extract_heart_rate(point: dict) -> tuple[date, float]:
@@ -148,19 +134,6 @@ def _extract_sleep(point: dict) -> tuple[date, float]:
     return day, float(s["summary"]["minutesAsleep"]) / 60
 
 
-def _extract_exercise(point: dict) -> tuple[date, float]:
-    e = point["exercise"]
-    interval = e["interval"]
-    day = _local_date(interval["startTime"], interval["startUtcOffset"])
-    if "activeDuration" in e:
-        seconds = _duration_seconds(e["activeDuration"])
-    else:
-        start = datetime.fromisoformat(interval["startTime"].replace("Z", "+00:00"))
-        end = datetime.fromisoformat(interval["endTime"].replace("Z", "+00:00"))
-        seconds = (end - start).total_seconds()
-    return day, seconds / 60
-
-
 @dataclass(frozen=True)
 class Aggregator:
     data_type_id: str  # matches the raw_dir subfolder, e.g. "steps"
@@ -174,7 +147,6 @@ class Aggregator:
 AGGREGATORS: list[Aggregator] = [
     Aggregator("weight", "Weight (lbs)", "mean", "float2", filtered=False, extract=_extract_weight),
     Aggregator("body-fat", "Body Fat (%)", "mean", "float2", filtered=False, extract=_extract_body_fat),
-    Aggregator("steps", "Steps", "sum", "int", filtered=True, extract=_extract_steps),
     Aggregator(
         "active-energy-burned",
         "Energy Burned (kcal)",
@@ -183,10 +155,7 @@ AGGREGATORS: list[Aggregator] = [
         filtered=True,
         extract=_extract_active_energy_burned,
     ),
-    # Not device-filtered: distance comes from the phone and treadmill apps,
-    # not the ring, and the rest have a single source today. See
-    # agent-notes/2026-10-06-sync-command.md.
-    Aggregator("distance", "Distance (mi)", "sum", "float2", filtered=False, extract=_extract_distance),
+    # Single-source today (the ring), so not device-filtered.
     Aggregator("heart-rate", "Avg Heart Rate (bpm)", "mean", "int", filtered=False, extract=_extract_heart_rate),
     Aggregator(
         "daily-resting-heart-rate",
@@ -200,13 +169,29 @@ AGGREGATORS: list[Aggregator] = [
         "daily-oxygen-saturation", "SpO2 (%)", "mean", "float2", filtered=False, extract=_extract_oxygen_saturation
     ),
     Aggregator("sleep", "Sleep (hrs)", "sum", "float2", filtered=False, extract=_extract_sleep),
-    Aggregator("exercise", "Exercise (min)", "sum", "int", filtered=False, extract=_extract_exercise),
+]
+
+# Built from timed intervals rather than per-point values, so they're not
+# Aggregators: see _steps_by_day and _exercise_minutes_by_day.
+STEPS_COLUMN = "Steps"
+EXERCISE_COLUMN = "Exercise (min)"
+
+GOOGLE_COLUMNS: list[str] = [
+    "Weight (lbs)",
+    "Body Fat (%)",
+    STEPS_COLUMN,
+    "Energy Burned (kcal)",
+    "Avg Heart Rate (bpm)",
+    "Resting Heart Rate (bpm)",
+    "SpO2 (%)",
+    "Sleep (hrs)",
+    EXERCISE_COLUMN,
 ]
 
 # Core nutrition columns first, then the Google-sourced ones — matches the
 # order the original hand-built output.csv used. The extra Cronometer
 # nutrients (see nutrient_columns) follow these.
-CSV_COLUMNS: list[str] = list(NUTRITION_COLUMNS.values()) + [a.column for a in AGGREGATORS]
+CSV_COLUMNS: list[str] = list(NUTRITION_COLUMNS.values()) + GOOGLE_COLUMNS
 
 
 def _load_window_files(raw_dir: Path, data_type_id: str) -> list[dict]:
@@ -242,46 +227,178 @@ def _day_owners(payloads: list[dict]) -> dict[date, int]:
     return owners
 
 
+def _owned_points(
+    raw_dir: Path, data_type_id: str, day_of: Callable[[dict], date]
+) -> list[tuple[date, dict]]:
+    """(day, point) for every point whose day its window file owns — see
+    _day_owners. Points `day_of` can't place are dropped."""
+    payloads = _load_window_files(raw_dir, data_type_id)
+    owners = _day_owners(payloads)
+    result = []
+    for payload in payloads:
+        for point in payload.get("dataPoints", []):
+            try:
+                day = day_of(point)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if owners.get(day) == id(payload):
+                result.append((day, point))
+    return result
+
+
 def _samples_for(
     raw_dir: Path, aggregator: Aggregator, device_packages: list[str]
 ) -> dict[date, list[float]]:
-    payloads = _load_window_files(raw_dir, aggregator.data_type_id)
-    owners = _day_owners(payloads)
-
     samples: dict[date, list[float]] = {}
-    for payload in payloads:
-        for point in payload.get("dataPoints", []):
-            if aggregator.filtered and device_packages and _package_name(point) not in device_packages:
-                continue
-            try:
-                day, value = aggregator.extract(point)
-            except (KeyError, TypeError, ValueError):
-                continue
-            if owners.get(day) != id(payload):
-                continue  # a fresher file owns this day; skip to avoid double-counting
-            samples.setdefault(day, []).append(value)
+    for day, point in _owned_points(raw_dir, aggregator.data_type_id, lambda p: aggregator.extract(p)[0]):
+        if aggregator.filtered and device_packages and _package_name(point) not in device_packages:
+            continue
+        samples.setdefault(day, []).append(aggregator.extract(point)[1])
     return samples
 
 
-def build_daily_rows(raw_dir: Path, device_packages: list[str]) -> dict[date, dict[str, float | None]]:
+@dataclass(frozen=True)
+class _Span:
+    """A timed interval: start/end in UTC (None if the point has no
+    timestamps), the local day it's credited to, and its value."""
+
+    start: datetime | None
+    end: datetime | None
+    day: date
+    value: float
+
+
+def _interval_day(interval: dict) -> date:
+    if "civilStartTime" in interval:
+        return _civil_date(interval["civilStartTime"])
+    return _local_date(interval["startTime"], interval["startUtcOffset"])
+
+
+def _span(day: date, interval: dict, value: float) -> _Span:
+    start = _utc(interval["startTime"]) if "startTime" in interval else None
+    end = _utc(interval["endTime"]) if "endTime" in interval else None
+    return _Span(start, end, day, value)
+
+
+def _merge_overlapping(spans: list[_Span], combine: Callable[[_Span, _Span], float]) -> list[_Span]:
+    """Collapse overlapping spans into one, keeping the earliest start's day."""
+    merged: list[_Span] = []
+    for span in sorted(spans, key=lambda s: s.start):
+        last = merged[-1] if merged else None
+        if last is not None and span.start < last.end:
+            merged[-1] = _Span(last.start, max(last.end, span.end), last.day, combine(last, span))
+        else:
+            merged.append(span)
+    return merged
+
+
+def _overlap_seconds(span: _Span, sessions: list[_Span]) -> float:
+    return sum(
+        max(0.0, (min(span.end, s.end) - max(span.start, s.start)).total_seconds()) for s in sessions
+    )
+
+
+def _fraction_outside(span: _Span, sessions: list[_Span]) -> float:
+    """Share of `span` that falls outside every (non-overlapping) session.
+
+    The ring reports steps in 30-minute buckets, so a bucket that's half
+    treadmill keeps half its count. A point with no timestamps can't be
+    placed, so it's kept whole; an instantaneous one is all-or-nothing.
+    """
+    if span.start is None or span.end is None or not sessions:
+        return 1.0
+    total = (span.end - span.start).total_seconds()
+    if total <= 0:
+        return 0.0 if any(s.start <= span.start < s.end for s in sessions) else 1.0
+    return max(0.0, 1.0 - _overlap_seconds(span, sessions) / total)
+
+
+def _steps_by_day(
+    raw_dir: Path, device_packages: list[str], treadmill_packages: list[str]
+) -> dict[date, float]:
+    """Steps per day: the primary source(s), except while a treadmill runs.
+
+    `device_packages` (the ring) is the primary source. During a treadmill
+    session the treadmill's own count replaces whatever the primary source
+    logged for that stretch: the ring misses steps when the hand is still
+    (e.g. working at a walking desk), while the treadmill counts the belt.
+    Overlapping treadmill records are one session uploaded twice (seen
+    live: identical counts, start times ~80 min apart), so they're merged
+    and counted once. Empty `device_packages` means every non-treadmill
+    source. See agent-notes/2026-10-06-treadmill-steps.md.
+    """
+    points = _owned_points(raw_dir, "steps", lambda p: _civil_date(p["steps"]["interval"]["civilStartTime"]))
+
+    treadmill: list[_Span] = []
+    primary: list[_Span] = []
+    for day, point in points:
+        package = _package_name(point)
+        try:
+            span = _span(day, point["steps"]["interval"], float(point["steps"]["count"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if package in treadmill_packages:
+            if span.start is not None and span.end is not None:
+                treadmill.append(span)
+        elif not device_packages or package in device_packages:
+            primary.append(span)
+
+    sessions = _merge_overlapping(treadmill, lambda a, b: max(a.value, b.value))
+
+    totals: dict[date, float] = {}
+    for span in primary:
+        totals[span.day] = totals.get(span.day, 0.0) + span.value * _fraction_outside(span, sessions)
+    for session in sessions:
+        totals[session.day] = totals.get(session.day, 0.0) + session.value
+    return totals
+
+
+def _exercise_minutes_by_day(raw_dir: Path) -> dict[date, float]:
+    """Wall-clock exercise minutes per day, overlapping sessions counted once.
+
+    The phone and the treadmill app can both log the same walk, so summing
+    each session's duration would double-count it.
+    """
+    points = _owned_points(raw_dir, "exercise", lambda p: _interval_day(p["exercise"]["interval"]))
+    spans = []
+    for day, point in points:
+        try:
+            span = _span(day, point["exercise"]["interval"], 0.0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if span.start is not None and span.end is not None:
+            spans.append(span)
+
+    totals: dict[date, float] = {}
+    for session in _merge_overlapping(spans, lambda a, b: 0.0):
+        minutes = (session.end - session.start).total_seconds() / 60
+        totals[session.day] = totals.get(session.day, 0.0) + minutes
+    return totals
+
+
+def build_daily_rows(
+    raw_dir: Path,
+    device_packages: list[str],
+    treadmill_packages: list[str] | None = None,
+) -> dict[date, dict[str, float | None]]:
     """One row per calendar day that has at least one value in any column."""
-    columns: dict[str, dict[date, list[float]]] = {
+    samples: dict[str, dict[date, list[float]]] = {
         aggregator.column: _samples_for(raw_dir, aggregator, device_packages) for aggregator in AGGREGATORS
     }
+    columns: dict[str, dict[date, float]] = {}
+    for aggregator in AGGREGATORS:
+        per_day = samples[aggregator.column]
+        if aggregator.agg == "sum":
+            columns[aggregator.column] = {day: sum(v) for day, v in per_day.items()}
+        else:
+            columns[aggregator.column] = {day: sum(v) / len(v) for day, v in per_day.items()}
+    columns[STEPS_COLUMN] = _steps_by_day(raw_dir, device_packages, treadmill_packages or [])
+    columns[EXERCISE_COLUMN] = _exercise_minutes_by_day(raw_dir)
 
     days = sorted({day for per_day in columns.values() for day in per_day})
     rows: dict[date, dict[str, float | None]] = {}
     for day in days:
-        row: dict[str, float | None] = {}
-        for aggregator in AGGREGATORS:
-            values = columns[aggregator.column].get(day)
-            if not values:
-                row[aggregator.column] = None
-            elif aggregator.agg == "sum":
-                row[aggregator.column] = sum(values)
-            else:
-                row[aggregator.column] = sum(values) / len(values)
-        rows[day] = row
+        rows[day] = {column: columns[column].get(day) for column in GOOGLE_COLUMNS}
     return rows
 
 
@@ -361,7 +478,7 @@ def build_combined_rows(
     days = [end - timedelta(days=n) for n in range(config.csv_days - 1, -1, -1)]
 
     packages = device_packages if device_packages is not None else config.csv_device_packages
-    google_rows = build_daily_rows(config.raw_dir, packages)
+    google_rows = build_daily_rows(config.raw_dir, packages, config.csv_treadmill_packages)
     nutrition = _load_nutrition(config.output_dir / "nutrition" / "daily.json")
     extra_columns = nutrient_columns(nutrition)
     targets = _load_target_settings(config.target_settings_path)
@@ -370,8 +487,8 @@ def build_combined_rows(
     for day in days:
         row: dict[str, float | None] = {}
         google = google_rows.get(day, {})
-        for aggregator in AGGREGATORS:
-            row[aggregator.column] = google.get(aggregator.column)
+        for column in GOOGLE_COLUMNS:
+            row[column] = google.get(column)
         n = nutrition.get(day, {})
         for json_key, column in NUTRITION_COLUMNS.items():
             row[column] = n.get(json_key)

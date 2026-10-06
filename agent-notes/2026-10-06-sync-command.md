@@ -18,11 +18,12 @@
     map. CSV appends them alphabetically after the fixed columns
     (`daily.json` is saved with `sort_keys`, so Cronometer's original column
     order isn't preserved anyway). Non-numeric `Completed` is dropped.
-  - **Google types that actually have data on disk**: distance (mi, sum),
-    heart-rate (mean), daily-resting-heart-rate, daily-oxygen-saturation
+  - **Google types that actually have data on disk**: ~~distance~~ (removed
+    same day, see [[2026-10-06-treadmill-steps]]), heart-rate (mean), daily-resting-heart-rate, daily-oxygen-saturation
     (`averagePercentage`), sleep (`summary.minutesAsleep`, summed, credited
     to the local date of `interval.endTime` + `endUtcOffset`), exercise
-    (`activeDuration`, falling back to interval length).
+    (originally summed `activeDuration`; now an interval union, see
+    [[2026-10-06-treadmill-steps]]).
   - Types with zero data points on disk (HRV, respiratory rate, VO2 max,
     hydration, etc.) were **not** added: their point schemas have never been
     observed, so an extractor would be guesswork. Add them the same way once
@@ -34,12 +35,10 @@
 
 ## Decisions worth knowing
 
-- **Distance is not device-filtered.** Sources are the phone's
-  `com.google.android.apps.fitness` (~1 mi/day) and the `com.urevo.app`
-  treadmill (~1.5–2.4 mi/day); the ring reports none, so the
-  `csv_device_packages` filter would blank the column. Whether phone and
-  treadmill overlap is unverified. If they turn out to double-count, a
-  per-column package filter is the likely fix.
+- ~~Distance is not device-filtered.~~ **Superseded**: the Distance column
+  was removed. It double-counted (two phone sources mirror each other, and
+  the treadmill uploaded one session twice), and the user cares about total
+  steps, not distance. See [[2026-10-06-treadmill-steps]].
 - No gap-filling for any new column (no interpolation, no targets).
   `targetSettings.json` has `steps`/`sleep` keys, but they are targets, not
   fill values, and were left alone, as before.
