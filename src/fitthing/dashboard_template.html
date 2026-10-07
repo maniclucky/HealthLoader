@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FitThing Dashboard</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --under: #2a78d6;
+  --over: #e34948;
+  --dots: #898781;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --under: #3987e5;
+    --over: #e66767;
+    --dots: #a3a29b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --under: #3987e5; --over: #e66767; --dots: #a3a29b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+header h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
+header p { margin: 0; color: var(--ink-2); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 16px; margin-top: 20px; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 16px 8px;
+  min-width: 0;
+}
+.card h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.card .sub { color: var(--ink-2); font-size: 13px; margin: 2px 0 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.sw.dot { border-radius: 50%; }
+.sw.line { height: 2px; width: 14px; border-radius: 1px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.chart text.label { fill: var(--ink-2); font-size: 12px; }
+.tip {
+  position: absolute; pointer-events: none; z-index: 2;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 8px 10px; font-size: 12px; white-space: nowrap; display: none;
+}
+.tip b { display: block; margin-bottom: 4px; font-weight: 600; }
+.tip div { display: flex; align-items: center; gap: 6px; }
+.tip .v { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
+details { margin-top: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
+summary { cursor: pointer; font-weight: 600; }
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+th, td { padding: 4px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink-2); font-weight: 600; }
+td.na { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>FitThing</h1>
+    <p id="range"></p>
+  </header>
+  <div class="grid">
+    <section class="card"><h2>Weight</h2><p class="sub" id="weight-sub"></p><div class="legend" id="weight-legend"></div><div class="chart" id="weight"></div></section>
+    <section class="card"><h2>Steps</h2><p class="sub" id="steps-sub"></p><div class="chart" id="steps"></div></section>
+    <section class="card"><h2>Calories vs target</h2><p class="sub" id="kcal-sub"></p><div class="legend" id="kcal-legend"></div><div class="chart" id="kcal"></div></section>
+    <section class="card"><h2>Macros vs target</h2><p class="sub" id="macro-sub"></p><div class="legend" id="macro-legend"></div><div class="chart" id="macro"></div></section>
+  </div>
+  <details>
+    <summary>Data table</summary>
+    <div class="table-wrap"><table id="table"></table></div>
+  </details>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const DAYS = DATA.days;
+const T = DATA.targets;
+const NS = "http://www.w3.org/2000/svg";
+
+const fmtInt = (v) => Math.round(v).toLocaleString();
+const fmt1 = (v) => v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const signed = (f) => (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + f(Math.abs(v));
+const parseDay = (s) => new Date(s + "T00:00:00");
+const dayLabel = (s) => parseDay(s).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const dayLong = (s) => parseDay(s).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+function el(tag, attrs, parent) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+function niceTicks(lo, hi, count) {
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const raw = (hi - lo) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+  const start = Math.floor(lo / step) * step;
+  const ticks = [];
+  for (let v = start; v <= hi + step * 1e-9; v += step) ticks.push(+v.toFixed(10));
+  if (ticks[ticks.length - 1] < hi) ticks.push(+(ticks[ticks.length - 1] + step).toFixed(10));
+  return ticks;
+}
+
+// A bar from the baseline to `y`, with a 4px rounded data end and a square base.
+function barPath(x, w, y0, y) {
+  const h = Math.abs(y - y0);
+  const r = Math.min(4, h, w / 2);
+  if (y <= y0) {
+    return `M${x},${y0}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y0}Z`;
+  }
+  return `M${x},${y0}V${y - r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y - r}V${y0}Z`;
+}
+
+function legend(id, items) {
+  const box = document.getElementById(id);
+  box.innerHTML = items.map((i) =>
+    `<span><i class="sw ${i.shape || ""}" style="background:var(${i.color})"></i>${i.label}</span>`).join("");
+}
+
+/*
+ spec: {
+   series: [{ key, label, kind: "bars"|"line"|"dots", color: "--var" | (v) => "--var", endLabel: bool }],
+   zero: include 0 in the domain and draw it as the baseline,
+   ref: { value, label } horizontal reference line,
+   format: value formatter for ticks, tooltip: (d) => [[colorVar, label, text]]
+ }
+*/
+function chart(id, spec) {
+  const box = document.getElementById(id);
+  const draw = () => {
+    box.innerHTML = "";
+    const W = box.clientWidth, H = 240;
+    const hasEndLabels = spec.series.some((s) => s.endLabel);
+    const m = { t: 12, r: spec.ref ? 92 : hasEndLabels ? 84 : 12, b: 26, l: 52 };
+    const pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const n = DAYS.length, bw = pw / n;
+    const cx = (i) => m.l + bw * (i + 0.5);
+
+    const vals = [];
+    spec.series.forEach((s) => DAYS.forEach((d) => d[s.key] != null && vals.push(d[s.key])));
+    if (spec.zero) vals.push(0);
+    if (spec.ref) vals.push(spec.ref.value);
+    if (!vals.length) vals.push(0);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (!spec.zero) { const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad; }
+    const ticks = niceTicks(lo, hi, 5);
+    const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+    const sy = (v) => m.t + ph - ((v - y0) / (y1 - y0)) * ph;
+
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" }, box);
+    ticks.forEach((t) => {
+      el("line", { x1: m.l, x2: m.l + pw, y1: sy(t), y2: sy(t), style: `stroke:var(${t === 0 && spec.zero ? "--axis" : "--grid"});stroke-width:1` }, svg);
+      const tx = el("text", { x: m.l - 8, y: sy(t) + 4, "text-anchor": "end" }, svg);
+      tx.textContent = spec.format(t);
+    });
+    const every = Math.max(1, Math.ceil(56 / bw));
+    DAYS.forEach((d, i) => {
+      if ((n - 1 - i) % every) return;
+      const tx = el("text", { x: cx(i), y: H - 6, "text-anchor": "middle" }, svg);
+      tx.textContent = dayLabel(d.date);
+    });
+
+    const hover = el("rect", { x: 0, y: m.t, width: Math.max(bw, 1), height: ph, style: "fill:var(--grid);opacity:0;pointer-events:none" }, svg);
+    const colorOf = (s, v) => (typeof s.color === "function" ? s.color(v) : s.color);
+
+    spec.series.forEach((s) => {
+      if (s.kind === "bars") {
+        const w = Math.max(1, Math.min(24, bw - 2));
+        DAYS.forEach((d, i) => {
+          const v = d[s.key];
+          if (v == null || v === 0) return;
+          el("path", { d: barPath(cx(i) - w / 2, w, sy(0), sy(v)), style: `fill:var(${colorOf(s, v)})` }, svg);
+        });
+      } else if (s.kind === "line") {
+        let dStr = "", pen = false, last = -1;
+        DAYS.forEach((d, i) => {
+          const v = d[s.key];
+          if (v == null) { pen = false; return; }
+          dStr += `${pen ? "L" : "M"}${cx(i)},${sy(v)}`; pen = true; last = i;
+        });
+        el("path", { d: dStr, style: `fill:none;stroke:var(${s.color});stroke-width:2;stroke-linejoin:round;stroke-linecap:round` }, svg);
+        if (last >= 0) {
+          // Points without a neighbour (isolated days) still need a visible mark.
+          DAYS.forEach((d, i) => {
+            if (d[s.key] == null) return;
+            const prev = DAYS[i - 1], next = DAYS[i + 1];
+            const isolated = (!prev || prev[s.key] == null) && (!next || next[s.key] == null);
+            if (isolated || i === last) el("circle", { cx: cx(i), cy: sy(d[s.key]), r: 4, style: `fill:var(${s.color});stroke:var(--surface);stroke-width:2` }, svg);
+          });
+          if (s.endLabel) s._end = { x: cx(last), y: sy(DAYS[last][s.key]), text: s.endText ? s.endText(DAYS[last][s.key]) : spec.format(DAYS[last][s.key]) };
+        }
+      } else if (s.kind === "dots") {
+        DAYS.forEach((d, i) => {
+          if (d[s.key] == null) return;
+          el("circle", { cx: cx(i), cy: sy(d[s.key]), r: 4, style: `fill:var(${s.color});stroke:var(--surface);stroke-width:2` }, svg);
+        });
+      }
+    });
+
+    if (spec.ref) {
+      const ry = sy(spec.ref.value);
+      el("line", { x1: m.l, x2: m.l + pw, y1: ry, y2: ry, style: "stroke:var(--ink-2);stroke-width:1" }, svg);
+      const tx = el("text", { x: m.l + pw + 6, y: ry + 4, class: "label" }, svg);
+      tx.textContent = spec.ref.label;
+    }
+
+    // End labels, nudged apart so they never overlap.
+    const ends = spec.series.filter((s) => s._end).map((s) => s._end).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 14);
+    ends.forEach((e) => {
+      const tx = el("text", { x: m.l + pw + 8, y: e.y + 4, class: "label" }, svg);
+      tx.textContent = e.text;
+    });
+    spec.series.forEach((s) => delete s._end);
+
+    const tip = document.createElement("div");
+    tip.className = "tip";
+    box.appendChild(tip);
+    const hide = () => { tip.style.display = "none"; hover.style.opacity = 0; };
+    svg.addEventListener("pointerleave", hide);
+    svg.addEventListener("pointermove", (ev) => {
+      const rect = svg.getBoundingClientRect();
+      const x = (ev.clientX - rect.left) * (W / rect.width);
+      const i = Math.floor((x - m.l) / bw);
+      if (i < 0 || i >= n) return hide();
+      hover.setAttribute("x", m.l + bw * i);
+      hover.style.opacity = 0.6;
+      const d = DAYS[i];
+      tip.innerHTML = `<b>${dayLong(d.date)}</b>` + spec.tooltip(d).map(([c, label, text]) =>
+        `<div>${c ? `<i class="sw" style="background:var(${c})"></i>` : ""}${label}<span class="v">${text}</span></div>`).join("");
+      tip.style.display = "block";
+      const px = (cx(i) / W) * rect.width;
+      const left = px + 12 + tip.offsetWidth > rect.width ? px - 12 - tip.offsetWidth : px + 12;
+      tip.style.left = `${Math.max(0, left)}px`;
+      tip.style.top = `${m.t}px`;
+    });
+  };
+  draw();
+  new ResizeObserver(draw).observe(box);
+}
+
+const first = DAYS[0], last = DAYS[DAYS.length - 1];
+document.getElementById("range").textContent =
+  `${dayLong(first.date)} – ${dayLong(last.date)} · ${DAYS.length} days · generated ${DATA.generated.replace("T", " ")}`;
+const notLogged = "Not logged";
+const target = (v, unit) => (v == null ? "no target set" : `target ${fmtInt(v)}${unit}`);
+
+// Weight
+const N = DATA.movingAverageDays;
+document.getElementById("weight-sub").textContent = `lbs · dots are actual weigh-ins; line is the mean of weigh-ins in the trailing ${N} days`;
+legend("weight-legend", [{ label: "Weigh-in", color: "--dots", shape: "dot" }, { label: `${N}-day average`, color: "--s1", shape: "line" }]);
+chart("weight", {
+  series: [
+    { key: "weight", label: "Weigh-in", kind: "dots", color: "--dots" },
+    { key: "weightAvg", label: `${N}-day average`, kind: "line", color: "--s1", endLabel: true },
+  ],
+  format: fmt1,
+  tooltip: (d) => [
+    ["--dots", "Weigh-in", d.weight == null ? "—" : `${fmt1(d.weight)} lbs`],
+    ["--s1", `${N}-day avg`, d.weightAvg == null ? "—" : `${fmt1(d.weightAvg)} lbs`],
+  ],
+});
+
+// Steps
+document.getElementById("steps-sub").textContent = `Steps per day · ${target(T.steps, "")}`;
+chart("steps", {
+  series: [{ key: "steps", label: "Steps", kind: "bars", color: "--s1" }],
+  zero: true,
+  ref: T.steps == null ? null : { value: T.steps, label: `Target ${fmtInt(T.steps)}` },
+  format: fmtInt,
+  tooltip: (d) => [
+    ["--s1", "Steps", d.steps == null ? "—" : fmtInt(d.steps)],
+    ...(T.steps == null || d.steps == null ? [] : [[null, "vs target", signed(fmtInt)(d.steps - T.steps)]]),
+  ],
+});
+
+// Calories
+document.getElementById("kcal-sub").textContent = `kcal eaten minus ${target(T.calories, " kcal")} · blank days weren't logged`;
+legend("kcal-legend", [{ label: "Under target", color: "--under" }, { label: "Over target", color: "--over" }]);
+chart("kcal", {
+  series: [{ key: "kcal", label: "Calories", kind: "bars", color: (v) => (v < 0 ? "--under" : "--over") }],
+  zero: true,
+  format: signed(fmtInt),
+  tooltip: (d) => [[d.kcal == null ? null : d.kcal < 0 ? "--under" : "--over", "vs target", d.kcal == null ? notLogged : `${signed(fmtInt)(d.kcal)} kcal`]],
+});
+
+// Macros
+const MACROS = [
+  { key: "protein", label: "Protein", color: "--s1" },
+  { key: "carbs", label: "Carbs", color: "--s2" },
+  { key: "fat", label: "Fat", color: "--s3" },
+];
+document.getElementById("macro-sub").textContent =
+  "grams eaten minus target (" + MACROS.map((mc) => `${mc.label.toLowerCase()} ${T[mc.key] == null ? "—" : fmtInt(T[mc.key]) + " g"}`).join(", ") + ") · 0 = on target";
+legend("macro-legend", MACROS.map((mc) => ({ label: mc.label, color: mc.color, shape: "line" })));
+chart("macro", {
+  series: MACROS.map((mc) => ({ ...mc, kind: "line", endLabel: true, endText: (v) => `${mc.label} ${signed(fmtInt)(v)}` })),
+  zero: true,
+  format: signed(fmtInt),
+  tooltip: (d) => MACROS.map((mc) => [mc.color, mc.label, d[mc.key] == null ? notLogged : `${signed(fmt1)(d[mc.key])} g`]),
+});
+
+// Table view
+const cols = [
+  ["Date", (d) => d.date],
+  ["Weigh-in (lbs)", (d) => d.weight == null ? null : fmt1(d.weight)],
+  [`${N}-day avg (lbs)`, (d) => d.weightAvg == null ? null : fmt1(d.weightAvg)],
+  ["Steps", (d) => d.steps == null ? null : fmtInt(d.steps)],
+  ["Calories vs target", (d) => d.kcal == null ? null : signed(fmtInt)(d.kcal)],
+  ["Protein vs target (g)", (d) => d.protein == null ? null : signed(fmt1)(d.protein)],
+  ["Carbs vs target (g)", (d) => d.carbs == null ? null : signed(fmt1)(d.carbs)],
+  ["Fat vs target (g)", (d) => d.fat == null ? null : signed(fmt1)(d.fat)],
+];
+document.getElementById("table").innerHTML =
+  `<thead><tr>${cols.map(([h]) => `<th>${h}</th>`).join("")}</tr></thead><tbody>` +
+  DAYS.slice().reverse().map((d) => `<tr>${cols.map(([, f]) => { const v = f(d); return v == null ? '<td class="na">—</td>' : `<td>${v}</td>`; }).join("")}</tr>`).join("") +
+  "</tbody>";
+</script>
+</body>
+</html>

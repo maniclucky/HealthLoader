@@ -44,6 +44,21 @@ TARGET_SETTINGS_KEYS: dict[str, str] = {
     "fat": "Fat (g)",
 }
 
+# targetSettings.json key -> (column it's a daily target for, column holding
+# that day's value minus the target). Negative = under target. Unlike
+# TARGET_SETTINGS_KEYS, steps is here but never target-filled.
+TARGET_DELTAS: dict[str, tuple[str, str]] = {
+    "calories": ("Energy (kcal)", "Energy vs Target (kcal)"),
+    "protein": ("Protein (g)", "Protein vs Target (g)"),
+    "carbs": ("Carbs (g)", "Carbs vs Target (g)"),
+    "fat": ("Fat (g)", "Fat vs Target (g)"),
+    "steps": ("Steps", "Steps vs Target"),
+}
+
+WEIGHT_COLUMN = "Weight (lbs)"
+WEIGHT_CHANGE_COLUMN = "Weight Change 7d (lbs)"
+WEIGHT_CHANGE_LOOKBACK_DAYS = 7
+
 # Missing values in these columns are linearly interpolated between the
 # nearest known neighbor on each side (a scale/ring reading is assumed to
 # change smoothly day to day). No such assumption holds for steps or
@@ -67,6 +82,12 @@ COLUMN_FORMAT: dict[str, str] = {
     "SpO2 (%)": "float2",
     "Sleep (hrs)": "float2",
     "Exercise (min)": "int",
+    "Energy vs Target (kcal)": "float2",
+    "Protein vs Target (g)": "float2",
+    "Carbs vs Target (g)": "float2",
+    "Fat vs Target (g)": "float2",
+    "Steps vs Target": "int",
+    WEIGHT_CHANGE_COLUMN: "float2",
 }
 
 
@@ -191,7 +212,9 @@ GOOGLE_COLUMNS: list[str] = [
 # Core nutrition columns first, then the Google-sourced ones — matches the
 # order the original hand-built output.csv used. The extra Cronometer
 # nutrients (see nutrient_columns) follow these.
-CSV_COLUMNS: list[str] = list(NUTRITION_COLUMNS.values()) + GOOGLE_COLUMNS
+# Derived columns (target deltas, weight change) come last.
+DERIVED_COLUMNS: list[str] = [delta for _, delta in TARGET_DELTAS.values()] + [WEIGHT_CHANGE_COLUMN]
+CSV_COLUMNS: list[str] = list(NUTRITION_COLUMNS.values()) + GOOGLE_COLUMNS + DERIVED_COLUMNS
 
 
 def _load_window_files(raw_dir: Path, data_type_id: str) -> list[dict]:
@@ -433,6 +456,21 @@ def _load_target_settings(path: Path) -> dict:
         return {}
 
 
+def reference_weight(measured: dict[date, float], day: date) -> float | None:
+    """The weigh-in to compare `day` against: the one WEIGHT_CHANGE_LOOKBACK_DAYS
+    earlier, or else the measured day nearest to that date, the more recent
+    one winning a tie. Only days strictly before `day` count, so a day is
+    never compared with itself or the future. None if there's no earlier
+    weigh-in at all.
+    """
+    target = day - timedelta(days=WEIGHT_CHANGE_LOOKBACK_DAYS)
+    earlier = [d for d in measured if d < day]
+    if not earlier:
+        return None
+    best = min(earlier, key=lambda d: (abs((d - target).days), -d.toordinal()))
+    return measured[best]
+
+
 def _interpolate(values: list[float | None]) -> list[float | None]:
     """Fill each None that has a known value on both sides, linearly.
 
@@ -510,6 +548,22 @@ def build_combined_rows(
             if rows[day][column] is None:
                 rows[day][column] = float(target_value)
 
+    # After target-filling, so an unlogged nutrition day shows a delta of 0.
+    for setting_key, (column, delta_column) in TARGET_DELTAS.items():
+        target_value = targets.get(setting_key)
+        for day in days:
+            value = rows[day][column]
+            rows[day][delta_column] = None if value is None or target_value is None else value - float(target_value)
+
+    # The reference is looked up among actual weigh-ins across all raw data
+    # (not just this window, and never an interpolated value); the day being
+    # compared uses its row's weight, which may be interpolated.
+    measured = {d: r[WEIGHT_COLUMN] for d, r in google_rows.items() if r.get(WEIGHT_COLUMN) is not None}
+    for day in days:
+        current = rows[day][WEIGHT_COLUMN]
+        reference = reference_weight(measured, day)
+        rows[day][WEIGHT_CHANGE_COLUMN] = None if current is None or reference is None else current - reference
+
     return rows
 
 
@@ -519,6 +573,23 @@ def _format(column: str, value: float | None) -> str:
     if COLUMN_FORMAT.get(column, DEFAULT_FORMAT) == "int":
         return str(round(value))
     return f"{value:.2f}"
+
+
+def output_columns(config: Config, rows: dict[date, dict[str, float | None]]) -> list[str]:
+    """config.csv_columns, checked against what can be written.
+
+    "all" is every fixed column plus every Cronometer nutrient. A named
+    column that doesn't exist raises ValueError listing the valid names,
+    rather than writing a silently blank column for a typo.
+    """
+    any_row = next(iter(rows.values()), {})
+    available = CSV_COLUMNS + [c for c in any_row if c not in CSV_COLUMNS]
+    if config.csv_columns == "all":
+        return available
+    unknown = [c for c in config.csv_columns if c not in available]
+    if unknown:
+        raise ValueError(f"csv_columns has unknown column(s) {unknown}. Available: {available}")
+    return list(config.csv_columns)
 
 
 def write_daily_csv(
@@ -534,8 +605,7 @@ def write_daily_csv(
     the only way to stay correct. Returns (path, row count).
     """
     rows = build_combined_rows(config, device_packages=device_packages, end=end)
-    any_row = next(iter(rows.values()), {})
-    columns = CSV_COLUMNS + [c for c in any_row if c not in CSV_COLUMNS]
+    columns = output_columns(config, rows)
 
     path = config.output_dir / DAILY_CSV_PATH
     path.parent.mkdir(parents=True, exist_ok=True)

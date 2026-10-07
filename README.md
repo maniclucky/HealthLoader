@@ -7,10 +7,11 @@ your computer:
   and 30+ other data types, saved as raw JSON.
 - **Cronometer** (optional) — daily calories, protein, carbs, and fat.
 
-It also builds a day-level `data/health/daily.csv` combining weight, body fat,
-steps (ring, with treadmill counts during treadmill sessions), energy burned,
-heart rate, SpO2, sleep, exercise, and every
-Cronometer nutrient, with small gaps filled in.
+It also builds a day-level `data/health/daily.csv`: calories, protein, carbs,
+fat, weight, body fat, and steps (ring, with treadmill counts during treadmill
+sessions), each day's difference from your targets, and weight change vs. 7
+days earlier, with small gaps filled in. More columns (heart rate, SpO2, sleep,
+exercise, every Cronometer nutrient) can be switched on with `csv_columns`.
 
 Reruns are incremental: each run catches up from where the last one stopped
 without duplicating data.
@@ -32,6 +33,7 @@ fitthing cronometer-auth      # optional: sign in to Cronometer
 fitthing cronometer-export    # optional: download daily nutrition
 
 fitthing sync                 # both pulls in one go, then rebuild daily.csv
+fitthing dashboard            # charts (weight, macros, steps) in a local HTML page
 ```
 
 Full setup, command flags, and output formats: [docs/SETUP.md](docs/SETUP.md).

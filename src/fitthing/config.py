@@ -20,6 +20,21 @@ DEFAULTS = {
     "csv_device_packages": ["com.gdjztech.ringconn"],
     "csv_treadmill_packages": ["com.urevo.app"],
     "csv_days": 30,
+    "csv_columns": [
+        "Energy (kcal)",
+        "Protein (g)",
+        "Carbs (g)",
+        "Fat (g)",
+        "Weight (lbs)",
+        "Body Fat (%)",
+        "Steps",
+        "Energy vs Target (kcal)",
+        "Protein vs Target (g)",
+        "Carbs vs Target (g)",
+        "Fat vs Target (g)",
+        "Steps vs Target",
+        "Weight Change 7d (lbs)",
+    ],
     "target_settings_path": "targetSettings.json",
 }
 
@@ -74,6 +89,9 @@ class Config:
     csv_days: int
     target_settings_path: Path
     csv_treadmill_packages: list[str] = field(default_factory=lambda: list(DEFAULTS["csv_treadmill_packages"]))
+    # "all", or the CSV headers to write, in order (see aggregate.CSV_COLUMNS
+    # plus any Cronometer nutrient header).
+    csv_columns: str | list[str] = field(default_factory=lambda: list(DEFAULTS["csv_columns"]))
     cronometer: CronometerConfig = field(default_factory=lambda: _load_cronometer_config({}))
 
     @property
@@ -121,5 +139,6 @@ def load_config(path: Path | None = None) -> Config:
         csv_days=int(values["csv_days"]),
         target_settings_path=Path(values["target_settings_path"]),
         csv_treadmill_packages=list(values["csv_treadmill_packages"]),
+        csv_columns=values["csv_columns"] if values["csv_columns"] == "all" else list(values["csv_columns"]),
         cronometer=_load_cronometer_config(values.get("cronometer", {})),
     )

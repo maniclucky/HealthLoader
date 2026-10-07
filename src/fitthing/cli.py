@@ -22,6 +22,7 @@ from fitthing.cronometer.auth import (
 from fitthing.cronometer.client import CronometerClient, CronometerClientError, ExportCapReached
 from fitthing.cronometer.export import MAX_BACKFILL_DAYS as CRONOMETER_MAX_BACKFILL_DAYS
 from fitthing.cronometer.export import run_cronometer_export, run_cronometer_import
+from fitthing.dashboard import write_dashboard
 from fitthing.datatypes import REGISTRY, resolve
 from fitthing.export import MAX_BACKFILL_DAYS, run_export
 from fitthing.sync import run_sync
@@ -101,6 +102,17 @@ def build_parser():
         help="Merge a Cronometer Daily Summary CSV you exported by hand.",
     )
     cronometer_import_parser.add_argument("file", help="Path to the exported CSV.")
+
+    dashboard_parser = subparsers.add_parser(
+        "dashboard",
+        help="Write data/health/dashboard.html (weight, macros, steps) and open it.",
+    )
+    dashboard_parser.add_argument(
+        "--days", type=int, help="Days to chart, ending yesterday (default: csv_days, 30)."
+    )
+    dashboard_parser.add_argument(
+        "--no-open", action="store_true", help="Write the file without opening a browser."
+    )
 
     return parser
 
@@ -233,6 +245,9 @@ def cmd_export(args, config: Config) -> int:
     except ApiError as exc:
         print(f"Export stopped: {exc}", file=sys.stderr)
         return 1
+    except ValueError as exc:  # e.g. a bad csv_columns entry
+        print(str(exc), file=sys.stderr)
+        return 2
 
     print(
         f"Exported {len(result.exported)} type(s); "
@@ -250,7 +265,11 @@ def cmd_sync(args, config: Config) -> int:
         print(f"--days must be between 1 and {max_days}.", file=sys.stderr)
         return 2
 
-    result = run_sync(config, interactive=_interactive(args), full=args.full, days=args.days)
+    try:
+        result = run_sync(config, interactive=_interactive(args), full=args.full, days=args.days)
+    except ValueError as exc:  # e.g. a bad csv_columns entry
+        print(str(exc), file=sys.stderr)
+        return 2
 
     if result.cronometer is not None:
         print(
@@ -267,6 +286,19 @@ def cmd_sync(args, config: Config) -> int:
         )
     print(f"Wrote {result.csv_days} day(s) to {result.csv_path}.", file=sys.stderr)
     return 0 if result.ok else 1
+
+
+def cmd_dashboard(args, config: Config) -> int:
+    if args.days is not None and args.days < 1:
+        print("--days must be at least 1.", file=sys.stderr)
+        return 2
+    path = write_dashboard(config, days=args.days)
+    print(f"Wrote {path}.", file=sys.stderr)
+    if not args.no_open:
+        import webbrowser
+
+        webbrowser.open(path.resolve().as_uri())
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -295,6 +327,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sync(args, config)
     if args.command == "cronometer-import":
         return cmd_cronometer_import(args, config)
+    if args.command == "dashboard":
+        return cmd_dashboard(args, config)
 
     print(f"'{args.command}' is not implemented yet.", file=sys.stderr)
     return 1

@@ -161,6 +161,23 @@ to re-capture the current values from your browser's DevTools and update
 (the request body templates). Until you do, `cronometer-import` still
 works from a manually exported CSV.
 
+## Dashboard
+
+```bash
+fitthing dashboard            # write data/health/dashboard.html and open it
+fitthing dashboard --days 90  # chart a longer window (default: csv_days)
+fitthing dashboard --no-open  # just write the file
+```
+
+A single self-contained HTML file (no internet needed) built from the same
+data on disk as `daily.csv`, so run `fitthing sync` first for fresh numbers.
+Four charts: weight (actual weigh-ins as dots, plus the mean of weigh-ins
+in the trailing 7 days), steps vs the `steps` target, and calories and
+protein/carbs/fat vs their targets in `targetSettings.json`. Unlike
+`daily.csv`, days with no Cronometer log are left blank in the nutrition
+charts rather than target-filled to 0. Hover any chart for that day's values;
+"Data table" at the bottom lists every number.
+
 ## 6. Pull everything at once
 
 ```bash
@@ -213,11 +230,28 @@ normally.
 ### Day-level CSV
 
 Every `fitthing export` or `fitthing sync` run also rebuilds
-`data/health/daily.csv`: columns `Energy (kcal)`, `Protein (g)`,
-`Carbs (g)`, `Fat (g)`, `Weight (lbs)`, `Body Fat (%)`, `Steps`,
-`Energy Burned (kcal)`, `Avg Heart Rate (bpm)`,
-`Resting Heart Rate (bpm)`, `SpO2 (%)`, `Sleep (hrs)`, `Exercise (min)`,
-then every other Cronometer nutrient (alphabetical), one row per calendar day,
+`data/health/daily.csv`. By default it has the columns `Energy (kcal)`,
+`Protein (g)`, `Carbs (g)`, `Fat (g)`, `Weight (lbs)`, `Body Fat (%)`, and
+`Steps`, then:
+
+- `Energy vs Target (kcal)`, `Protein vs Target (g)`, `Carbs vs Target (g)`,
+  `Fat vs Target (g)`, `Steps vs Target`: the day's value minus its daily
+  target from `target_settings_path` (keys `calories`, `protein`, `carbs`,
+  `fat`, `steps`). Negative means under target. Blank if either side is
+  missing. A day with no Cronometer log is target-filled (below), so its
+  nutrition deltas read 0.
+- `Weight Change 7d (lbs)`: the day's weight minus the weigh-in 7 days
+  earlier. If there was no weigh-in that day, the nearest earlier weigh-in
+  to it is used, the more recent one winning a tie. The reference is always
+  a real weigh-in (never an interpolated value), can come from before the
+  CSV window, and is never the day itself or a later day.
+
+Set `csv_columns` in `config.toml` to choose others, in any order,
+or `"all"` for everything: the above plus `Energy Burned (kcal)`,
+`Avg Heart Rate (bpm)`, `Resting Heart Rate (bpm)`, `SpO2 (%)`,
+`Sleep (hrs)`, `Exercise (min)`, and every other Cronometer nutrient
+(alphabetical). An unknown column name is an error that lists the valid
+ones. One row per calendar day,
 covering the trailing `csv_days` days (default 30, in `config.toml`) —
 **every** day in that window gets a row, even with no data at all, so gaps
 are visible rather than silently missing.

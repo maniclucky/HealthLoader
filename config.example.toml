@@ -45,6 +45,27 @@ csv_device_packages = ["com.gdjztech.ringconn"]
 # Leave empty to use only csv_device_packages.
 csv_treadmill_packages = ["com.urevo.app"]
 
+# Which columns daily.csv contains, in order. Use "all" for every column:
+# also energy burned, heart rate, resting heart rate, SpO2, sleep, exercise
+# minutes, and every Cronometer nutrient (e.g. "Fiber (g)", "Sodium (mg)").
+csv_columns = [
+    "Energy (kcal)",
+    "Protein (g)",
+    "Carbs (g)",
+    "Fat (g)",
+    "Weight (lbs)",
+    "Body Fat (%)",
+    "Steps",
+    # Day's value minus its target in target_settings_path (negative = under).
+    "Energy vs Target (kcal)",
+    "Protein vs Target (g)",
+    "Carbs vs Target (g)",
+    "Fat vs Target (g)",
+    "Steps vs Target",
+    # Weight minus the weigh-in 7 days earlier (or the nearest earlier one).
+    "Weight Change 7d (lbs)",
+]
+
 # How many trailing days the CSV covers, ending yesterday. Every day in this
 # window gets a row even with no data at all, so gaps are visible for the
 # interpolation/target-filling below.

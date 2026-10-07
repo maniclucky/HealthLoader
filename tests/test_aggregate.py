@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from fitthing.aggregate import build_combined_rows, build_daily_rows, write_daily_csv
+from fitthing.aggregate import build_combined_rows, build_daily_rows, reference_weight, write_daily_csv
 from fitthing.config import Config
 
 
@@ -13,6 +13,7 @@ def make_config(
     tmp_path: Path,
     csv_device_packages: list[str] | None = None,
     csv_days: int = 30,
+    csv_columns: str | list[str] = "all",
     target_settings: dict | None = None,
 ) -> Config:
     target_settings_path = tmp_path / "targetSettings.json"
@@ -29,6 +30,7 @@ def make_config(
         csv_device_packages=["ringconn"] if csv_device_packages is None else csv_device_packages,
         csv_days=csv_days,
         target_settings_path=target_settings_path,
+        csv_columns=csv_columns,
     )
 
 
@@ -392,8 +394,14 @@ def test_write_daily_csv_writes_header_and_blank_cells_for_missing_values(tmp_pa
         "SpO2 (%)",
         "Sleep (hrs)",
         "Exercise (min)",
+        "Energy vs Target (kcal)",
+        "Protein vs Target (g)",
+        "Carbs vs Target (g)",
+        "Fat vs Target (g)",
+        "Steps vs Target",
+        "Weight Change 7d (lbs)",
     ]
-    assert rows[1] == ["2026-01-01", "", "", "", "", "", "", "100", "", "", "", "", "", ""]
+    assert rows[1] == ["2026-01-01", "", "", "", "", "", "", "100"] + [""] * 12
 
 
 def test_write_daily_csv_with_no_data_still_writes_the_full_window_blank(tmp_path):
@@ -558,3 +566,133 @@ def test_no_treadmill_packages_uses_the_primary_source_only(tmp_path):
     rows = build_daily_rows(raw_dir, device_packages=["ringconn"], treadmill_packages=[])
 
     assert rows[date(2026, 1, 1)]["Steps"] == 1000
+
+
+# --- csv_columns: which columns get written ---
+
+
+def test_default_config_writes_the_summary_columns(tmp_path):
+    from fitthing.config import DEFAULTS
+
+    config = make_config(tmp_path, csv_days=1, csv_columns=DEFAULTS["csv_columns"])
+
+    path, _ = write_daily_csv(config, end=date(2026, 1, 1))
+
+    with path.open(newline="") as f:
+        header = next(csv.reader(f))
+    assert header == [
+        "Date",
+        "Energy (kcal)",
+        "Protein (g)",
+        "Carbs (g)",
+        "Fat (g)",
+        "Weight (lbs)",
+        "Body Fat (%)",
+        "Steps",
+        "Energy vs Target (kcal)",
+        "Protein vs Target (g)",
+        "Carbs vs Target (g)",
+        "Fat vs Target (g)",
+        "Steps vs Target",
+        "Weight Change 7d (lbs)",
+    ]
+
+
+def test_csv_columns_can_name_a_cronometer_nutrient(tmp_path):
+    config = make_config(tmp_path, csv_days=1, csv_columns=["Steps", "Sodium (mg)"])
+    _write_daily_nutrition(config.output_dir, {"2026-01-01": {"nutrients": {"Sodium (mg)": 2300}}})
+
+    path, _ = write_daily_csv(config, end=date(2026, 1, 1))
+
+    with path.open(newline="") as f:
+        assert list(csv.reader(f)) == [["Date", "Steps", "Sodium (mg)"], ["2026-01-01", "", "2300.00"]]
+
+
+def test_unknown_csv_column_raises_listing_the_valid_names(tmp_path):
+    config = make_config(tmp_path, csv_days=1, csv_columns=["Stepz"])
+
+    with pytest.raises(ValueError) as exc_info:
+        write_daily_csv(config, end=date(2026, 1, 1))
+
+    assert "Stepz" in str(exc_info.value)
+    assert "Steps" in str(exc_info.value)
+
+
+# --- target deltas ---
+
+
+def test_target_deltas_are_value_minus_target(tmp_path):
+    config = make_config(
+        tmp_path,
+        csv_days=1,
+        target_settings={"calories": 2500, "protein": 180, "carbs": 300, "fat": 70, "steps": 10000},
+    )
+    _write_daily_nutrition(
+        config.output_dir,
+        {"2026-01-01": {"calories_kcal": 2600, "protein_g": 150, "carbs_g": 300, "fat_g": 80}},
+    )
+    _write_window(
+        config.raw_dir, "steps", "2026-01-01", "2026-01-02", "2026-01-02T00:00:00Z",
+        [_steps_point(2026, 1, 1, 8000)],
+    )
+
+    row = build_combined_rows(config, end=date(2026, 1, 1))[date(2026, 1, 1)]
+
+    assert row["Energy vs Target (kcal)"] == 100
+    assert row["Protein vs Target (g)"] == -30
+    assert row["Carbs vs Target (g)"] == 0
+    assert row["Fat vs Target (g)"] == 10
+    assert row["Steps vs Target"] == -2000
+
+
+def test_target_deltas_blank_without_a_value_or_a_target(tmp_path):
+    config = make_config(tmp_path, csv_days=1, target_settings={"calories": 2500})
+
+    row = build_combined_rows(config, end=date(2026, 1, 1))[date(2026, 1, 1)]
+
+    # Calories were target-filled (unlogged day), so the delta is 0.
+    assert row["Energy vs Target (kcal)"] == 0
+    # No protein target, no steps logged.
+    assert row["Protein vs Target (g)"] is None
+    assert row["Steps vs Target"] is None
+
+
+# --- 7-day weight change ---
+
+
+def test_reference_weight_uses_the_day_exactly_seven_days_prior():
+    measured = {date(2026, 1, 1): 200.0, date(2026, 1, 3): 199.0, date(2026, 1, 7): 198.0}
+
+    assert reference_weight(measured, date(2026, 1, 8)) == 200.0
+
+
+def test_reference_weight_falls_back_to_the_nearest_day():
+    measured = {date(2026, 1, 1): 200.0, date(2026, 1, 4): 199.0}
+
+    # Target Jan 3: Jan 4 is 1 day away, Jan 1 is 2.
+    assert reference_weight(measured, date(2026, 1, 10)) == 199.0
+
+
+def test_reference_weight_tie_favors_the_more_recent_day():
+    measured = {date(2026, 1, 2): 200.0, date(2026, 1, 4): 199.0}
+
+    # Target Jan 3: both are 1 day away.
+    assert reference_weight(measured, date(2026, 1, 10)) == 199.0
+
+
+def test_reference_weight_ignores_the_day_itself_and_later():
+    measured = {date(2026, 1, 10): 200.0, date(2026, 1, 11): 199.0}
+
+    assert reference_weight(measured, date(2026, 1, 10)) is None
+
+
+def test_weight_change_looks_back_before_the_csv_window(tmp_path):
+    config = make_config(tmp_path, csv_days=1)
+    _write_window(
+        config.raw_dir, "weight", "2026-01-01", "2026-01-09", "2026-01-09T00:00:00Z",
+        [_weight_point(2026, 1, 1, 100000), _weight_point(2026, 1, 8, 99000)],
+    )
+
+    row = build_combined_rows(config, end=date(2026, 1, 8))[date(2026, 1, 8)]
+
+    assert row["Weight Change 7d (lbs)"] == pytest.approx(-1000 * 0.00220462262185)

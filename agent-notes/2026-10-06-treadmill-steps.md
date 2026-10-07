@@ -56,3 +56,31 @@ summing durations double-counted, e.g. 10-04: 142 → 105).
 
 - Energy burned is still ring-only during treadmill sessions (the treadmill
   reports none). It probably undercounts for the same reason steps did.
+
+## Follow-up: default CSV trimmed to seven columns
+
+Same day, the user asked for the summary to contain only energy, protein,
+carbs, fat, weight, body fat, and steps. Implemented as a `csv_columns`
+config key (default: those seven; `"all"` = everything), applied only at
+write time in `aggregate.output_columns()`. Every other column is still
+computed, so switching back is a config change. Unknown names raise
+ValueError (CLI exits 2 with the list of valid names) rather than writing
+a blank column for a typo.
+
+## Follow-up: target deltas + 7-day weight change
+
+The user sketched a `cmd_augment` in `cli.py` (uncommitted, not wired up,
+and broken: undefined `foig`, `pd` not imported, `parse_dates=["date"]`).
+It hardcoded five daily targets identical to `targetSettings.json`.
+Implemented in `aggregate.build_combined_rows` instead, so `sync`/`export`
+write it, and the draft was removed:
+- Targets are read from `targetSettings.json`, not hardcoded. The repo is
+  public and commit 62e733b had already scrubbed nutrition targets from
+  tracked files.
+- `TARGET_DELTAS` → five `... vs Target` columns (value − target),
+  computed after target-filling, so unlogged nutrition days show 0.
+- `Weight Change 7d (lbs)` = row weight (possibly interpolated) minus
+  `reference_weight()`: the measured weigh-in on day−7, else the nearest
+  measured day strictly before the row's day, later date wins ties. Looks
+  across all raw data, not just the CSV window.
+- All six are in the default `csv_columns`.
